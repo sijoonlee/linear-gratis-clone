@@ -50,6 +50,12 @@ Implementation notes:
 - Operators should include spacing automatically: ` && `, ` || `.
 - Snippets should use double quotes to match current examples.
 - Preserve manual editing at all times.
+- Add short instruction text explaining that holding Shift inserts a negative condition.
+- While Shift is held, value chips should visibly switch into negative mode, e.g. red outline/tint.
+- Shift-clicking a value snippet should insert the negative equivalent:
+  - `status == "Todo"` becomes `status != "Todo"`
+  - `priority == "urgent"` becomes `priority != "urgent"`
+  - `labels.includes("bug")` becomes `!labels.includes("bug")`
 
 Useful API data sources:
 - `/api/statuses?teamId=...`
@@ -57,6 +63,7 @@ Useful API data sources:
 - `/api/users`
 - `/api/labels?teamId=...`
 
-Open questions:
-- Should negated label snippets be included in v1, e.g. `!labels.includes("blocked")`?
-- Should the saved view display a generated human-readable summary next to the raw query?
+Decisions:
+- Include negative conditions in v1 through Shift-modified value chips.
+- Do not add a separate negated chip for every value in v1; use the Shift interaction to keep the palette compact.
+- Defer generated human-readable summaries. Reliable summaries require parsing enough of the query expression to avoid misleading output, which is outside this composer scope.
