@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { Bell, X, CheckCheck } from 'lucide-react';
 import type { Notification } from '@/lib/notifications';
 
+const AUTO_EXPAND_NOTIFICATIONS_KEY = 'auto-expand-notifications';
+
 const TYPE_STYLES: Record<string, string> = {
   info:    'bg-blue-500/10 text-blue-500',
   success: 'bg-green-500/10 text-green-500',
@@ -33,6 +35,9 @@ export function NotificationBell() {
     es.onmessage = (e) => {
       const n = JSON.parse(e.data as string) as Notification;
       setNotifications(prev => [n, ...prev]);
+      if (localStorage.getItem(AUTO_EXPAND_NOTIFICATIONS_KEY) !== 'false') {
+        setOpen(true);
+      }
     };
     return () => es.close();
   }, []);

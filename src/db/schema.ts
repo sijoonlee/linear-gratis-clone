@@ -113,10 +113,12 @@ export const schedules = pgTable('schedules', {
   description: text('description'),
   prompt: text('prompt').notNull(),
   cronExpression: text('cron_expression'),
-  workingDirectory: text('working_directory').notNull(),
+  workingDirectory: text('working_directory'),
+  agentCli: text('agent_cli').notNull().default('claude'),
   model: text('model').notNull().default('claude-sonnet-4-6'),
   permissionMode: text('permission_mode').notNull().default('ask'),
   enabled: boolean('enabled').notNull().default(true),
+  lastRunAt: timestamp('last_run_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -127,11 +129,21 @@ export const cronTasks = pgTable('cron_tasks', {
   id: uuid('id').defaultRandom().primaryKey(),
   scheduleId: uuid('schedule_id').notNull().references(() => schedules.id, { onDelete: 'cascade' }),
   status: text('status').notNull().default('pending'),
+  triggeredBy: text('triggered_by').notNull().default('manual'),
+  scheduledFor: timestamp('scheduled_for'),
   startedAt: timestamp('started_at'),
   finishedAt: timestamp('finished_at'),
   output: text('output'),
   exitCode: integer('exit_code'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+// ─── App Settings ─────────────────────────────────────────────────────────────
+
+export const appSettings = pgTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
 // ─── Issues ───────────────────────────────────────────────────────────────────

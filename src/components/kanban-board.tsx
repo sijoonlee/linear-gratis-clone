@@ -72,23 +72,26 @@ function Column({
   onDrop,
   onDragStart,
   onQuickCreate,
+  creating,
+  onCreatingChange,
 }: {
   status: KanbanStatus;
   issues: KanbanIssue[];
   onDrop: (statusId: string) => void;
   onDragStart: (id: string) => void;
-  onQuickCreate: (statusId: string, title: string) => void;
+  onQuickCreate: (statusId: string, title: string) => Promise<void>;
+  creating: boolean;
+  onCreatingChange: (creating: boolean) => void;
 }) {
   const [over, setOver] = useState(false);
-  const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState('');
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;
-    onQuickCreate(status.id, title.trim());
+    await onQuickCreate(status.id, title.trim());
     setTitle('');
-    setCreating(false);
+    onCreatingChange(false);
   }
 
   return (
@@ -106,7 +109,7 @@ function Column({
         <span className="text-sm font-medium flex-1">{status.name}</span>
         <span className="text-xs text-muted-foreground tabular-nums">{issues.length}</span>
         <button
-          onClick={() => setCreating(c => !c)}
+          onClick={() => onCreatingChange(!creating)}
           className="p-0.5 hover:bg-accent rounded transition-colors text-muted-foreground hover:text-foreground"
         >
           <Plus className="h-3.5 w-3.5" />
@@ -127,7 +130,7 @@ function Column({
             autoFocus
             value={title}
             onChange={e => setTitle(e.target.value)}
-            onKeyDown={e => e.key === 'Escape' && setCreating(false)}
+            onKeyDown={e => e.key === 'Escape' && onCreatingChange(false)}
             placeholder="Issue title…"
             className="w-full text-sm bg-background border border-border rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary/50 placeholder:text-muted-foreground"
           />
@@ -135,7 +138,7 @@ function Column({
             <button type="submit" className="flex-1 py-1 bg-primary text-primary-foreground rounded text-xs font-medium hover:bg-primary/90 transition-colors">
               Save
             </button>
-            <button type="button" onClick={() => setCreating(false)} className="flex-1 py-1 border border-border rounded text-xs hover:bg-accent transition-colors">
+            <button type="button" onClick={() => onCreatingChange(false)} className="flex-1 py-1 border border-border rounded text-xs hover:bg-accent transition-colors">
               Cancel
             </button>
           </div>
@@ -150,11 +153,15 @@ export function KanbanBoard({
   issues,
   onStatusChange,
   onCreateIssue,
+  creatingStatusId,
+  onCreatingStatusChange,
 }: {
   statuses: KanbanStatus[];
   issues: KanbanIssue[];
   onStatusChange: (issueId: string, statusId: string) => void;
-  onCreateIssue: (statusId: string, title: string) => void;
+  onCreateIssue: (statusId: string, title: string) => Promise<void>;
+  creatingStatusId: string | null;
+  onCreatingStatusChange: (statusId: string | null) => void;
 }) {
   const dragging = useRef<string | null>(null);
 
@@ -180,6 +187,8 @@ export function KanbanBoard({
           onDrop={handleDrop}
           onDragStart={id => { dragging.current = id; }}
           onQuickCreate={onCreateIssue}
+          creating={creatingStatusId === status.id}
+          onCreatingChange={creating => onCreatingStatusChange(creating ? status.id : null)}
         />
       ))}
     </div>

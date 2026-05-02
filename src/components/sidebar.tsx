@@ -378,14 +378,14 @@ export function Sidebar() {
   const { teams, activeTeam, setActiveTeam } = useTeam();
 
   return (
-    <aside className="w-60 shrink-0 border-r border-border h-screen flex flex-col bg-sidebar overflow-y-auto">
+    <aside className="w-60 shrink-0 border-r border-border h-screen flex flex-col bg-sidebar overflow-hidden">
       {/* Current user */}
       <div className="p-2 border-b border-border">
         <UserDisplay />
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-2 space-y-0.5">
+      <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
         <SectionLabel label="Workspace" />
         <NavItem href="/members" icon={Users}       label="Members" />
         <NavItem href="/teams"   icon={UserCircle2} label="Teams" />

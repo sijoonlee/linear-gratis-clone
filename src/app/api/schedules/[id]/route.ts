@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { schedules, cronTasks } from '@/db/schema';
 import { eq, desc } from 'drizzle-orm';
+import { normalizeAgentCli } from '@/lib/agent-cli';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -27,13 +28,18 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     description: string;
     prompt: string;
     cronExpression: string | null;
-    workingDirectory: string;
+    workingDirectory: string | null;
+    agentCli: string;
     model: string;
     permissionMode: string;
     enabled: boolean;
+    lastRunAt: string | null;
   }>;
+  const { lastRunAt, agentCli, ...fields } = body;
   const [row] = await db.update(schedules).set({
-    ...body,
+    ...fields,
+    ...(agentCli !== undefined && { agentCli: normalizeAgentCli(agentCli) }),
+    ...(lastRunAt !== undefined && { lastRunAt: lastRunAt ? new Date(lastRunAt) : null }),
     updatedAt: new Date(),
   }).where(eq(schedules.id, id)).returning();
   if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 });

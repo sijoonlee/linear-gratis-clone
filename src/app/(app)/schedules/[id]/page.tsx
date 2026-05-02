@@ -4,10 +4,18 @@ import { useEffect, useState, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Trash2, CalendarClock, CheckCircle2, XCircle, Clock, AlertCircle } from 'lucide-react';
+import {
+  AGENT_CLI_OPTIONS,
+  DEFAULT_AGENT_CLI,
+  normalizeAgentCli,
+  type AgentCli,
+} from '@/lib/agent-cli';
 
 type CronTask = {
   id: string;
   status: string;
+  triggeredBy: string;
+  scheduledFor: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   output: string | null;
@@ -21,7 +29,8 @@ type Schedule = {
   description: string | null;
   prompt: string;
   cronExpression: string | null;
-  workingDirectory: string;
+  workingDirectory: string | null;
+  agentCli: AgentCli;
   model: string;
   permissionMode: string;
   enabled: boolean;
@@ -48,7 +57,13 @@ export default function ScheduleDetailPage({ params }: { params: Promise<{ id: s
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [workingDirectory, setWorkingDirectory] = useState('');
+  const [cronExpression, setCronExpression] = useState('');
+  const [enabled, setEnabled] = useState(true);
+  const [agentCli, setAgentCli] = useState<AgentCli>(DEFAULT_AGENT_CLI);
+  const [model, setModel] = useState('claude-sonnet-4-6');
+  const [permissionMode, setPermissionMode] = useState('ask');
   const [expandedTask, setExpandedTask] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetch(`/api/schedules/${id}`)
@@ -57,19 +72,48 @@ export default function ScheduleDetailPage({ params }: { params: Promise<{ id: s
         setSchedule(data);
         setName(data.name);
         setPrompt(data.prompt);
-        setWorkingDirectory(data.workingDirectory);
+        setWorkingDirectory(data.workingDirectory ?? '');
+        setCronExpression(data.cronExpression ?? '');
+        setEnabled(data.enabled);
+        setAgentCli(normalizeAgentCli(data.agentCli));
+        setModel(data.model);
+        setPermissionMode(data.permissionMode);
         setLoading(false);
       });
   }, [id]);
 
-  async function patch(fields: Record<string, unknown>) {
+  async function handleSave() {
+    if (!name.trim() || !prompt.trim()) return;
+    setSaving(true);
     const res = await fetch(`/api/schedules/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(fields),
+      body: JSON.stringify({
+        name: name.trim(),
+        prompt: prompt.trim(),
+        workingDirectory: workingDirectory.trim() || null,
+        cronExpression: cronExpression.trim() || null,
+        enabled,
+        agentCli,
+        model,
+        permissionMode,
+      }),
     });
     const { data } = await res.json() as { data: Schedule };
-    setSchedule(prev => prev ? { ...prev, ...data } : prev);
+    setSchedule(prev => prev ? { ...prev, ...data } : data);
+    setSaving(false);
+  }
+
+  function resetDraft() {
+    if (!schedule) return;
+    setName(schedule.name);
+    setPrompt(schedule.prompt);
+    setWorkingDirectory(schedule.workingDirectory ?? '');
+    setCronExpression(schedule.cronExpression ?? '');
+    setEnabled(schedule.enabled);
+    setAgentCli(normalizeAgentCli(schedule.agentCli));
+    setModel(schedule.model);
+    setPermissionMode(schedule.permissionMode);
   }
 
   async function handleDelete() {
@@ -91,9 +135,24 @@ export default function ScheduleDetailPage({ params }: { params: Promise<{ id: s
             <ArrowLeft className="h-3.5 w-3.5" />
             Schedules
           </Link>
-          <button onClick={handleDelete} className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition-colors">
-            <Trash2 className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={resetDraft}
+              className="px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving || !name.trim() || !prompt.trim()}
+              className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-xs font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button onClick={handleDelete} className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition-colors">
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         <div className="max-w-2xl mx-auto px-6 py-8 space-y-6">
@@ -101,7 +160,6 @@ export default function ScheduleDetailPage({ params }: { params: Promise<{ id: s
           <textarea
             value={name}
             onChange={e => setName(e.target.value)}
-            onBlur={() => name !== schedule.name && patch({ name })}
             rows={1}
             className="w-full text-2xl font-semibold bg-transparent outline-none resize-none"
             style={{ fieldSizing: 'content' } as React.CSSProperties}
@@ -113,10 +171,9 @@ export default function ScheduleDetailPage({ params }: { params: Promise<{ id: s
             <textarea
               value={prompt}
               onChange={e => setPrompt(e.target.value)}
-              onBlur={() => prompt !== schedule.prompt && patch({ prompt })}
               rows={5}
               className="w-full text-sm bg-background border border-border rounded px-3 py-2 outline-none focus:ring-1 focus:ring-primary/50 resize-none text-foreground/80 leading-relaxed"
-              placeholder="Instructions for Claude…"
+              placeholder={agentCli === 'claude' ? 'Instructions for Claude…' : 'Instructions for Codex…'}
             />
           </div>
 
@@ -126,9 +183,8 @@ export default function ScheduleDetailPage({ params }: { params: Promise<{ id: s
             <input
               value={workingDirectory}
               onChange={e => setWorkingDirectory(e.target.value)}
-              onBlur={() => workingDirectory !== schedule.workingDirectory && patch({ workingDirectory })}
               className="w-full text-sm bg-background border border-border rounded px-3 py-1.5 outline-none focus:ring-1 focus:ring-primary/50 font-mono"
-              placeholder="/path/to/project"
+              placeholder="Optional; defaults to daemon directory"
             />
           </div>
 
@@ -155,8 +211,11 @@ export default function ScheduleDetailPage({ params }: { params: Promise<{ id: s
                       >
                         <Icon className="h-3.5 w-3.5 shrink-0" style={{ color }} />
                         <span className="text-xs font-medium shrink-0" style={{ color }}>{label}</span>
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
+                          {task.triggeredBy === 'schedule' ? 'Scheduled' : 'Manual'}
+                        </span>
                         <span className="text-xs text-muted-foreground flex-1">
-                          {new Date(task.createdAt).toLocaleString()}
+                          {new Date(task.scheduledFor ?? task.createdAt).toLocaleString()}
                         </span>
                         {task.exitCode !== null && (
                           <span className="text-xs font-mono text-muted-foreground shrink-0">exit {task.exitCode}</span>
@@ -187,50 +246,65 @@ export default function ScheduleDetailPage({ params }: { params: Promise<{ id: s
         <div>
           <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Status</p>
           <button
-            onClick={() => patch({ enabled: !schedule.enabled })}
+            onClick={() => setEnabled(v => !v)}
             className={`flex items-center gap-2 px-3 py-1.5 rounded text-sm w-full transition-colors ${
-              schedule.enabled ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+              enabled ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
             }`}
           >
-            <span className={`w-2 h-2 rounded-full ${schedule.enabled ? 'bg-primary' : 'bg-muted-foreground'}`} />
-            {schedule.enabled ? 'Enabled' : 'Disabled'}
+            <span className={`w-2 h-2 rounded-full ${enabled ? 'bg-primary' : 'bg-muted-foreground'}`} />
+            {enabled ? 'Enabled' : 'Disabled'}
           </button>
+        </div>
+
+        <div>
+          <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Agent CLI</p>
+          <select
+            value={agentCli}
+            onChange={e => setAgentCli(normalizeAgentCli(e.target.value))}
+            className="w-full text-xs bg-background border border-border rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary/50"
+          >
+            {AGENT_CLI_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
         </div>
 
         {/* Cron expression */}
         <div>
           <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Cron Expression</p>
           <input
-            defaultValue={schedule.cronExpression ?? ''}
-            onBlur={e => patch({ cronExpression: e.target.value || null })}
+            value={cronExpression}
+            onChange={e => setCronExpression(e.target.value)}
             placeholder="Manual only"
             className="w-full text-xs font-mono bg-background border border-border rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary/50 placeholder:text-muted-foreground"
           />
         </div>
 
-        {/* Model */}
-        <div>
-          <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Model</p>
-          <select
-            value={schedule.model}
-            onChange={e => patch({ model: e.target.value })}
-            className="w-full text-xs bg-background border border-border rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary/50"
-          >
-            {MODELS.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
-        </div>
+        {agentCli === 'claude' && (
+          <>
+            {/* Model */}
+            <div>
+              <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Model</p>
+              <select
+                value={model}
+                onChange={e => setModel(e.target.value)}
+                className="w-full text-xs bg-background border border-border rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary/50"
+              >
+                {MODELS.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
 
-        {/* Permission mode */}
-        <div>
-          <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Permission Mode</p>
-          <select
-            value={schedule.permissionMode}
-            onChange={e => patch({ permissionMode: e.target.value })}
-            className="w-full text-xs bg-background border border-border rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary/50"
-          >
-            {PERMISSION_MODES.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
-        </div>
+            {/* Permission mode */}
+            <div>
+              <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Permission Mode</p>
+              <select
+                value={permissionMode}
+                onChange={e => setPermissionMode(e.target.value)}
+                className="w-full text-xs bg-background border border-border rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary/50"
+              >
+                {PERMISSION_MODES.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+          </>
+        )}
 
         {/* Created */}
         <div>

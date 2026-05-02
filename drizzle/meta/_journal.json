@@ -8,20 +8,6 @@
       "when": 1746230400000,
       "tag": "0000_initial",
       "breakpoints": false
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1746202800000,
-      "tag": "0001_notifications",
-      "breakpoints": false
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1746202900000,
-      "tag": "0002_cdc_trigger",
-      "breakpoints": false
     }
   ]
 }

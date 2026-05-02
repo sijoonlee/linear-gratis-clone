@@ -252,7 +252,7 @@ function TeamRow({
 }
 
 export default function TeamsPage() {
-  const { activeTeam, refreshTeams } = useTeam();
+  const { activeTeam, setActiveTeam, refreshTeams } = useTeam();
   const { currentUser } = useUser();
   const [teams, setTeams] = useState<Team[]>([]);
   const [memberTeamIds, setMemberTeamIds] = useState<Set<string>>(new Set());

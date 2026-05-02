@@ -19,6 +19,8 @@ export async function POST(req: NextRequest) {
   const body = await req.json() as {
     scheduleId: string;
     status: string;
+    triggeredBy?: string;
+    scheduledFor?: string;
     output?: string;
     exitCode?: number;
     startedAt?: string;
@@ -30,6 +32,8 @@ export async function POST(req: NextRequest) {
   const [row] = await db.insert(cronTasks).values({
     scheduleId: body.scheduleId,
     status: body.status,
+    triggeredBy: body.triggeredBy ?? 'manual',
+    scheduledFor: body.scheduledFor ? new Date(body.scheduledFor) : null,
     output: body.output,
     exitCode: body.exitCode,
     startedAt: body.startedAt ? new Date(body.startedAt) : null,
