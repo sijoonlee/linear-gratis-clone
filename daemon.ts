@@ -22,6 +22,7 @@ if (!DATABASE_URL) {
   process.exit(1);
 }
 
+// Only used for LISTEN/NOTIFY — no writes go through this connection.
 const sql = postgres(DATABASE_URL);
 
 type TaskPayload = { id: string; schedule_id: string };
@@ -29,16 +30,15 @@ type SchedulePayload = { id: string; operation: 'INSERT' | 'UPDATE' | 'DELETE' }
 type ScheduleRow = {
   id: string;
   enabled: boolean;
-  cron_expression: string | null;
+  cronExpression: string | null;
 };
 type ScheduleExecutionRow = {
   name: string;
   prompt: string;
-  cron_expression: string | null;
-  working_directory: string | null;
-  agent_cli: string | null;
+  workingDirectory: string | null;
+  agentCli: string | null;
   model: string;
-  permission_mode: string;
+  permissionMode: string;
 };
 
 const scheduleJobs = new Map<string, ScheduledTask>();
@@ -58,20 +58,25 @@ function permissionModeArg(mode: string) {
   }
 }
 
+async function api<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${WEB_SERVER_URL}${path}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+  });
+  return res.json() as Promise<T>;
+}
+
 async function sendNotification(title: string, body?: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') {
-  await fetch(`${WEB_SERVER_URL}/api/notifications`, {
+  await api('/api/notifications', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, body, type }),
   }).catch(() => {});
 }
 
 async function getAgentCli(): Promise<AgentCli> {
   try {
-    const [setting] = await sql<{ value: string }[]>`
-      SELECT value FROM app_settings WHERE key = ${AGENT_CLI_SETTING_KEY}
-    `;
-    return normalizeAgentCli(setting?.value);
+    const { data } = await api<{ data: Record<string, string> }>('/api/settings');
+    return normalizeAgentCli(data[AGENT_CLI_SETTING_KEY]);
   } catch {
     return DEFAULT_AGENT_CLI;
   }
@@ -102,15 +107,13 @@ function commandForAgentCli(agentCli: AgentCli, schedule: ScheduleExecutionRow, 
       '--model',
       schedule.model,
       '--permission-mode',
-      permissionModeArg(schedule.permission_mode),
+      permissionModeArg(schedule.permissionMode),
     ],
   };
 }
 
 async function runTask(taskId: string, scheduleId: string) {
-  const [schedule] = await sql<ScheduleExecutionRow[]>`
-    SELECT name, prompt, cron_expression, working_directory, agent_cli, model, permission_mode FROM schedules WHERE id = ${scheduleId}
-  `;
+  const { data: schedule } = await api<{ data: ScheduleExecutionRow | null }>(`/api/schedules/${scheduleId}`);
 
   if (!schedule) {
     console.error(`Schedule ${scheduleId} not found`);
@@ -118,21 +121,21 @@ async function runTask(taskId: string, scheduleId: string) {
   }
 
   const builtPrompt = schedule.prompt;
-
   console.log(`[task:${taskId}] running — ${builtPrompt.slice(0, 80)}`);
 
-  await sql`
-    UPDATE cron_tasks SET status = 'running', started_at = now() WHERE id = ${taskId}
-  `;
+  await api(`/api/cron-tasks/${taskId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'running', startedAt: new Date().toISOString() }),
+  });
 
   let output = '';
   let exitCode = 0;
   let status = 'completed';
 
   try {
-    const agentCli = schedule.agent_cli ? normalizeAgentCli(schedule.agent_cli) : await getAgentCli();
+    const agentCli = schedule.agentCli ? normalizeAgentCli(schedule.agentCli) : await getAgentCli();
     const { command, args } = commandForAgentCli(agentCli, schedule, builtPrompt);
-    const child = exec(command, args, { cwd: schedule.working_directory ?? process.cwd() });
+    const child = exec(command, args, { cwd: schedule.workingDirectory ?? process.cwd() });
     child.child.stdin?.end();
     const result = await child;
     output = result.stdout;
@@ -143,11 +146,10 @@ async function runTask(taskId: string, scheduleId: string) {
     status = 'failed';
   }
 
-  await sql`
-    UPDATE cron_tasks
-    SET status = ${status}, output = ${output}, exit_code = ${exitCode}, finished_at = now()
-    WHERE id = ${taskId}
-  `;
+  await api(`/api/cron-tasks/${taskId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status, output, exitCode, finishedAt: new Date().toISOString() }),
+  });
 
   console.log(`[task:${taskId}] ${status}`);
 
@@ -160,23 +162,9 @@ async function runTask(taskId: string, scheduleId: string) {
 }
 
 async function enqueueScheduleRun(scheduleId: string, dueAt: Date) {
-  await sql.begin(async tx => {
-    const [updated] = await tx`
-      UPDATE schedules
-      SET last_run_at = ${dueAt}, updated_at = now()
-      WHERE id = ${scheduleId}
-        AND enabled = true
-        AND cron_expression IS NOT NULL
-        AND (last_run_at IS NULL OR last_run_at < ${dueAt})
-      RETURNING id
-    `;
-
-    if (!updated) return;
-
-    await tx`
-      INSERT INTO cron_tasks (schedule_id, status, triggered_by, scheduled_for)
-      VALUES (${scheduleId}, 'pending', 'schedule', ${dueAt})
-    `;
+  await api(`/api/schedules/${scheduleId}/run`, {
+    method: 'POST',
+    body: JSON.stringify({ scheduledFor: dueAt.toISOString() }),
   });
 }
 
@@ -191,26 +179,22 @@ async function unregisterSchedule(scheduleId: string) {
 async function registerSchedule(scheduleId: string) {
   await unregisterSchedule(scheduleId);
 
-  const [schedule] = await sql<ScheduleRow[]>`
-    SELECT id, enabled, cron_expression
-    FROM schedules
-    WHERE id = ${scheduleId}
-  `;
+  const { data: schedule } = await api<{ data: ScheduleRow | null }>(`/api/schedules/${scheduleId}`);
 
-  if (!schedule || !schedule.enabled || !schedule.cron_expression) return;
+  if (!schedule || !schedule.enabled || !schedule.cronExpression) return;
 
-  if (!cron.validate(schedule.cron_expression)) {
-    console.error(`[scheduler:${schedule.id}] invalid cron expression: ${schedule.cron_expression}`);
+  if (!cron.validate(schedule.cronExpression)) {
+    console.error(`[scheduler:${schedule.id}] invalid cron expression: ${schedule.cronExpression}`);
     await sendNotification(
       'Invalid schedule cron expression',
-      `Schedule ${schedule.id} has invalid cron expression: ${schedule.cron_expression}`,
+      `Schedule ${schedule.id} has invalid cron expression: ${schedule.cronExpression}`,
       'error'
     );
     return;
   }
 
   const job = cron.schedule(
-    schedule.cron_expression,
+    schedule.cronExpression,
     (context: TaskContext) => {
       const dueAt = minuteStart(context.date);
       enqueueScheduleRun(schedule.id, dueAt).catch(err => console.error(`[scheduler:${schedule.id}] error`, err));
@@ -219,7 +203,7 @@ async function registerSchedule(scheduleId: string) {
   );
 
   scheduleJobs.set(schedule.id, job);
-  console.log(`[scheduler:${schedule.id}] registered ${schedule.cron_expression}`);
+  console.log(`[scheduler:${schedule.id}] registered ${schedule.cronExpression}`);
 }
 
 async function registerAllSchedules() {
@@ -228,13 +212,10 @@ async function registerAllSchedules() {
   }
   scheduleJobs.clear();
 
-  const schedules = await sql<ScheduleRow[]>`
-    SELECT id, enabled, cron_expression
-    FROM schedules
-    WHERE enabled = true AND cron_expression IS NOT NULL
-  `;
+  const { data: allSchedules } = await api<{ data: ScheduleRow[] }>('/api/schedules');
+  const enabled = allSchedules.filter(s => s.enabled && s.cronExpression);
 
-  await Promise.all(schedules.map(schedule => registerSchedule(schedule.id)));
+  await Promise.all(enabled.map(s => registerSchedule(s.id)));
   console.log(`[scheduler] registered ${scheduleJobs.size} schedule(s)`);
 }
 
