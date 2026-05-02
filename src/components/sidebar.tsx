@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { useTeam, type Team } from '@/contexts/team-context';
 import { useUser } from '@/contexts/user-context';
+import { NotificationBell } from '@/components/notification-bell';
 import {
   CheckCircle2,
   Layers,
@@ -399,7 +400,8 @@ export function Sidebar() {
       </nav>
 
       {/* Bottom */}
-      <div className="p-2 border-t border-border">
+      <div className="p-2 border-t border-border space-y-0.5">
+        <NotificationBell />
         <NavItem href="/settings" icon={Settings} label="Settings" />
       </div>
     </aside>

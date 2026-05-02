@@ -115,6 +115,7 @@ If no user exists yet, click **Register** in the sidebar to create one, then go 
 | `npm run db:migrate` | Apply pending migrations to the database |
 | `npm run db:studio` | Open Drizzle Studio (visual DB browser) |
 | `npm run db:seed` | Seed the database with sample data |
+| `npm run daemon` | Start the schedule execution daemon |
 
 ## Database Schema
 
@@ -165,6 +166,52 @@ All routes return `{ data: ... }` on success or `{ error: "..." }` on failure.
 | `/api/schedules/[id]` | GET, PATCH, DELETE | Schedule detail |
 | `/api/cron-tasks` | GET | List cron task execution history |
 | `/api/cron-tasks/[id]` | GET | Single cron task |
+
+## CDC Architecture (Schedule Execution)
+
+Schedules are executed by a separate daemon process that watches Postgres for new tasks using Change Data Capture (CDC) via `LISTEN/NOTIFY` — a built-in Postgres pub/sub mechanism.
+
+```
+Browser
+  │  (1) create cron_task (status: pending)
+  ▼
+Next.js web server ──────────────────── Postgres
+  │                                        │
+  │                          (2) trigger fires pg_notify
+  │                                        │
+  │                                        ▼
+  │                                     Daemon
+  │                          (3) LISTEN receives payload
+  │                          (4) runs claude --print
+  │                          (5) updates cron_task row
+  │                                        │
+  │◀────── (6) POST /api/notifications ────┘
+  │
+  ▼
+Browser receives notification via SSE (bell icon updates instantly)
+```
+
+### How it works
+
+1. User triggers a schedule → web server inserts a `cron_task` row with `status: pending`
+2. A Postgres trigger fires `pg_notify('cron_task_pending', payload)` on every insert
+3. The daemon (a separate Node.js process) is connected to Postgres via `LISTEN` and receives the payload immediately
+4. The daemon runs `claude --print` with the schedule's prompt and working directory
+5. The daemon writes the output, exit code, and final status back to the `cron_tasks` row
+6. The daemon POSTs to `/api/notifications` on the web server
+7. The web server pushes the notification to the browser via SSE — the bell icon updates without polling
+
+### Running the daemon
+
+```bash
+# Terminal 1 — web server
+npm run dev
+
+# Terminal 2 — daemon
+npm run daemon
+```
+
+The daemon reads `DATABASE_URL` from the environment (same as the web server). Optionally set `WEB_SERVER_URL` if the web server is not on `http://localhost:3000`.
 
 ## Deployment
 

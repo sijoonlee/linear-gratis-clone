@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useTeam } from '@/contexts/team-context';
-import { Plus, CalendarClock } from 'lucide-react';
+import { Plus, CalendarClock, Play, Sparkles } from 'lucide-react';
 
 type Schedule = {
   id: string;
@@ -33,6 +33,8 @@ export default function SchedulesPage() {
     model: 'claude-sonnet-4-6',
     permissionMode: 'ask',
   });
+  const [cronDescription, setCronDescription] = useState('');
+  const [converting, setConverting] = useState(false);
 
   const load = useCallback(async () => {
     if (!activeTeam) return;
@@ -64,6 +66,27 @@ export default function SchedulesPage() {
     setForm({ name: '', prompt: '', workingDirectory: '', cronExpression: '', model: 'claude-sonnet-4-6', permissionMode: 'ask' });
     setCreating(false);
     load();
+  }
+
+  async function runSchedule(s: Schedule) {
+    await fetch('/api/cron-tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scheduleId: s.id, status: 'pending' }),
+    });
+  }
+
+  async function convertCronExpression() {
+    if (!cronDescription.trim()) return;
+    setConverting(true);
+    const res = await fetch('/api/cron-expression', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description: cronDescription }),
+    });
+    const { data } = await res.json() as { data: { expression: string } };
+    setForm(f => ({ ...f, cronExpression: data.expression }));
+    setConverting(false);
   }
 
   async function toggleEnabled(s: Schedule) {
@@ -113,12 +136,32 @@ export default function SchedulesPage() {
             placeholder="Working directory (e.g. /home/user/project)"
             className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary/50 placeholder:text-muted-foreground"
           />
-          <input
-            value={form.cronExpression}
-            onChange={e => setForm(f => ({ ...f, cronExpression: e.target.value }))}
-            placeholder="Cron expression (e.g. 0 9 * * 1-5) — leave blank for manual"
-            className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary/50 placeholder:text-muted-foreground font-mono"
-          />
+          <div className="space-y-1.5">
+            <div className="flex gap-2">
+              <input
+                value={cronDescription}
+                onChange={e => setCronDescription(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); convertCronExpression(); } }}
+                placeholder="Describe the schedule (e.g. every weekday at 9am)"
+                className="flex-1 bg-background border border-border rounded px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary/50 placeholder:text-muted-foreground"
+              />
+              <button
+                type="button"
+                onClick={convertCronExpression}
+                disabled={converting || !cronDescription.trim()}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 text-primary rounded text-xs font-medium hover:bg-primary/20 disabled:opacity-50 transition-colors shrink-0"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                {converting ? 'Converting…' : 'Convert'}
+              </button>
+            </div>
+            <input
+              value={form.cronExpression}
+              onChange={e => setForm(f => ({ ...f, cronExpression: e.target.value }))}
+              placeholder="Cron expression (e.g. 0 9 * * 1-5) — leave blank for manual"
+              className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary/50 placeholder:text-muted-foreground font-mono"
+            />
+          </div>
           <div className="flex gap-3">
             <div className="flex-1">
               <span className="text-xs text-muted-foreground block mb-1">Model</span>
@@ -141,9 +184,18 @@ export default function SchedulesPage() {
               </select>
             </div>
           </div>
-          <div className="flex gap-2">
-            <button type="submit" className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-xs font-medium hover:bg-primary/90 transition-colors">Save</button>
+          <div className="flex items-center gap-2">
+            <button
+              type="submit"
+              disabled={!form.name || !form.prompt || !form.workingDirectory}
+              className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-xs font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+            >
+              Save
+            </button>
             <button type="button" onClick={() => setCreating(false)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Cancel</button>
+            {(!form.name || !form.prompt || !form.workingDirectory) && (
+              <span className="text-xs text-muted-foreground">Name, prompt, and working directory are required</span>
+            )}
           </div>
         </form>
       )}
@@ -177,6 +229,13 @@ export default function SchedulesPage() {
                 <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
                   {s.model.replace('claude-', '').replace(/-\d{8}$/, '')}
                 </span>
+                <button
+                  onClick={() => runSchedule(s)}
+                  title="Run now"
+                  className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors shrink-0"
+                >
+                  <Play className="h-3.5 w-3.5" />
+                </button>
               </div>
             ))}
           </div>
