@@ -1,12 +1,14 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { useTeam } from '@/contexts/team-context';
 import { PriorityIcon } from '@/components/priority-icon';
 import { StatusIcon } from '@/components/status-icon';
 import { KanbanBoard, type KanbanIssue, type KanbanStatus } from '@/components/kanban-board';
 import { priorityToNumber } from '@/lib/priority';
+import { compileViewQuery } from '@/lib/view-query';
 import { Plus, ChevronDown, ChevronRight, LayoutList, Kanban } from 'lucide-react';
 
 type Label = { id: string; name: string; color: string };
@@ -100,12 +102,15 @@ function StatusGroupSection({ group }: { group: StatusGroup }) {
 
 export default function IssuesPage() {
   const { activeTeam } = useTeam();
+  const searchParams = useSearchParams();
+  const query = searchParams.get('query') ?? '';
   const [issues, setIssues] = useState<Issue[]>([]);
   const [statuses, setStatuses] = useState<Status[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [creatingBoardStatusId, setCreatingBoardStatusId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState('');
-  const [view, setView] = useState<'list' | 'board'>('list');
+  const [view, setView] = useState<'list' | 'board'>('board');
 
   const load = useCallback(async () => {
     if (!activeTeam) return;
@@ -123,14 +128,28 @@ export default function IssuesPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const { visibleIssues, queryError } = useMemo(() => {
+    if (!query.trim()) return { visibleIssues: issues, queryError: null };
+    try {
+      const predicate = compileViewQuery(query);
+      return { visibleIssues: issues.filter(issue => predicate(issue)), queryError: null };
+    } catch (err) {
+      return {
+        visibleIssues: issues,
+        queryError: err instanceof Error ? err.message : 'Invalid query',
+      };
+    }
+  }, [issues, query]);
+
   async function createIssue(statusId: string, title: string) {
     if (!activeTeam) return;
-    await fetch('/api/issues', {
+    const res = await fetch('/api/issues', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ teamId: activeTeam.id, statusId, title }),
     });
-    load();
+    if (!res.ok) return;
+    await load();
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -142,16 +161,25 @@ export default function IssuesPage() {
   }
 
   async function handleStatusChange(issueId: string, statusId: string) {
-    await fetch(`/api/issues/${issueId}`, {
+    const previous = issues;
+    const status = statuses.find(s => s.id === statusId);
+    if (!status) return;
+
+    setIssues(prev => prev.map(i => (
+      i.id === issueId
+        ? { ...i, statusId: status.id, statusName: status.name, statusColor: status.color, statusType: status.type }
+        : i
+    )));
+
+    const res = await fetch(`/api/issues/${issueId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ statusId }),
     });
-    setIssues(prev => prev.map(i => {
-      if (i.id !== issueId) return i;
-      const s = statuses.find(s => s.id === statusId)!;
-      return { ...i, statusId: s.id, statusName: s.name, statusColor: s.color, statusType: s.type };
-    }));
+    if (!res.ok) {
+      setIssues(previous);
+      return;
+    }
   }
 
   // Build groups for list view
@@ -160,7 +188,7 @@ export default function IssuesPage() {
     statusName: s.name,
     statusColor: s.color,
     statusType: s.type,
-    issues: issues.filter(i => i.statusId === s.id),
+    issues: visibleIssues.filter(i => i.statusId === s.id),
   })).filter(g => g.issues.length > 0);
 
   return (
@@ -169,7 +197,9 @@ export default function IssuesPage() {
       <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
         <div>
           <h1 className="text-sm font-semibold">Issues</h1>
-          <p className="text-xs text-muted-foreground mt-0.5">{activeTeam?.name ?? ''}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {query ? `View query: ${query}` : activeTeam?.name ?? ''}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {/* View toggle */}
@@ -199,8 +229,8 @@ export default function IssuesPage() {
         </div>
       </div>
 
-      {/* Quick create (list view only) */}
-      {creating && view === 'list' && (
+      {/* Quick create */}
+      {creating && (
         <form onSubmit={handleCreate} className="flex items-center gap-3 px-6 py-3 border-b border-border bg-accent/20">
           <input
             autoFocus
@@ -219,15 +249,22 @@ export default function IssuesPage() {
       )}
 
       {/* Content */}
+      {queryError && (
+        <div className="px-6 py-2 border-b border-border bg-destructive/10 text-xs text-destructive">
+          Invalid view query: {queryError}
+        </div>
+      )}
       <div className="flex-1 overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center h-full text-sm text-muted-foreground">Loading…</div>
         ) : view === 'board' ? (
           <KanbanBoard
             statuses={statuses as KanbanStatus[]}
-            issues={issues as KanbanIssue[]}
+            issues={visibleIssues as KanbanIssue[]}
             onStatusChange={handleStatusChange}
             onCreateIssue={createIssue}
+            creatingStatusId={creatingBoardStatusId}
+            onCreatingStatusChange={setCreatingBoardStatusId}
           />
         ) : groups.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">

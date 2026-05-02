@@ -69,10 +69,12 @@ CREATE TABLE "schedules" (
   "description" text,
   "prompt" text NOT NULL,
   "cron_expression" text,
-  "working_directory" text NOT NULL,
+  "working_directory" text,
+  "agent_cli" text DEFAULT 'claude' NOT NULL,
   "model" text DEFAULT 'claude-sonnet-4-6' NOT NULL,
   "permission_mode" text DEFAULT 'ask' NOT NULL,
   "enabled" boolean DEFAULT true NOT NULL,
+  "last_run_at" timestamp,
   "created_at" timestamp DEFAULT now() NOT NULL,
   "updated_at" timestamp DEFAULT now() NOT NULL
 );
@@ -81,11 +83,19 @@ CREATE TABLE "cron_tasks" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "schedule_id" uuid NOT NULL REFERENCES "public"."schedules"("id") ON DELETE cascade,
   "status" text DEFAULT 'pending' NOT NULL,
+  "triggered_by" text DEFAULT 'manual' NOT NULL,
+  "scheduled_for" timestamp,
   "started_at" timestamp,
   "finished_at" timestamp,
   "output" text,
   "exit_code" integer,
   "created_at" timestamp DEFAULT now() NOT NULL
+);
+
+CREATE TABLE "app_settings" (
+  "key" text PRIMARY KEY NOT NULL,
+  "value" text NOT NULL,
+  "updated_at" timestamp DEFAULT now() NOT NULL
 );
 
 CREATE TABLE "issues" (
@@ -149,3 +159,47 @@ CREATE TABLE "views" (
   "created_at" timestamp DEFAULT now() NOT NULL,
   "updated_at" timestamp DEFAULT now() NOT NULL
 );
+
+CREATE OR REPLACE FUNCTION notify_cron_task_pending()
+RETURNS trigger AS $$
+BEGIN
+  IF NEW.status = 'pending' THEN
+    PERFORM pg_notify('cron_task_pending', json_build_object(
+      'id', NEW.id,
+      'schedule_id', NEW.schedule_id
+    )::text);
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER cron_task_pending_trigger
+AFTER INSERT ON cron_tasks
+FOR EACH ROW EXECUTE FUNCTION notify_cron_task_pending();
+
+CREATE OR REPLACE FUNCTION notify_schedule_changed()
+RETURNS trigger AS $$
+DECLARE
+  schedule_id uuid;
+BEGIN
+  schedule_id := COALESCE(NEW.id, OLD.id);
+
+  IF TG_OP = 'UPDATE'
+    AND OLD.enabled IS NOT DISTINCT FROM NEW.enabled
+    AND OLD.cron_expression IS NOT DISTINCT FROM NEW.cron_expression
+  THEN
+    RETURN NEW;
+  END IF;
+
+  PERFORM pg_notify('schedule_changed', json_build_object(
+    'id', schedule_id,
+    'operation', TG_OP
+  )::text);
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER schedule_changed_trigger
+AFTER INSERT OR UPDATE OR DELETE ON schedules
+FOR EACH ROW EXECUTE FUNCTION notify_schedule_changed();

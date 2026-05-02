@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { schedules } from '@/db/schema';
 import { eq, desc } from 'drizzle-orm';
+import { normalizeAgentCli } from '@/lib/agent-cli';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -19,16 +20,17 @@ export async function POST(req: NextRequest) {
     teamId: string;
     name: string;
     prompt: string;
-    workingDirectory: string;
+    workingDirectory?: string | null;
+    agentCli?: string;
     description?: string;
     cronExpression?: string;
     model?: string;
     permissionMode?: string;
     enabled?: boolean;
   };
-  if (!body.teamId || !body.name || !body.prompt || !body.workingDirectory) {
+  if (!body.teamId || !body.name || !body.prompt) {
     return NextResponse.json(
-      { error: 'teamId, name, prompt, and workingDirectory are required' },
+      { error: 'teamId, name, and prompt are required' },
       { status: 400 }
     );
   }
@@ -36,7 +38,8 @@ export async function POST(req: NextRequest) {
     teamId: body.teamId,
     name: body.name,
     prompt: body.prompt,
-    workingDirectory: body.workingDirectory,
+    workingDirectory: body.workingDirectory?.trim() || null,
+    agentCli: normalizeAgentCli(body.agentCli),
     description: body.description,
     cronExpression: body.cronExpression ?? null,
     model: body.model ?? 'claude-sonnet-4-6',

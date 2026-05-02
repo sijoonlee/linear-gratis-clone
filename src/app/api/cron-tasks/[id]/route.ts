@@ -16,14 +16,17 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const { id } = await params;
   const body = await req.json() as Partial<{
     status: string;
+    triggeredBy: string;
+    scheduledFor: string | null;
     output: string;
     exitCode: number;
     startedAt: string;
     finishedAt: string;
   }>;
-  const { startedAt, finishedAt, ...rest } = body;
+  const { scheduledFor, startedAt, finishedAt, ...rest } = body;
   const [row] = await db.update(cronTasks).set({
     ...rest,
+    ...(scheduledFor !== undefined && { scheduledFor: scheduledFor ? new Date(scheduledFor) : null }),
     ...(startedAt !== undefined && { startedAt: startedAt ? new Date(startedAt) : null }),
     ...(finishedAt !== undefined && { finishedAt: finishedAt ? new Date(finishedAt) : null }),
   }).where(eq(cronTasks.id, id)).returning();
