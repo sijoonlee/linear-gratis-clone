@@ -1,7 +1,7 @@
 import { config } from 'dotenv';
 config({ path: '.env.local' });
 
-import postgres from 'postgres';
+import http from 'http';
 import cron, { type ScheduledTask, type TaskContext } from 'node-cron';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -14,34 +14,31 @@ import {
 
 const exec = promisify(execFile);
 
-const DATABASE_URL = process.env.DATABASE_URL;
 const WEB_SERVER_URL = process.env.WEB_SERVER_URL ?? 'http://localhost:3000';
+const DAEMON_PORT = parseInt(process.env.DAEMON_PORT ?? '3001', 10);
 
-if (!DATABASE_URL) {
-  console.error('DATABASE_URL is not set');
-  process.exit(1);
-}
-
-const sql = postgres(DATABASE_URL);
-
-type TaskPayload = { id: string; schedule_id: string };
-type SchedulePayload = { id: string; operation: 'INSERT' | 'UPDATE' | 'DELETE' };
 type ScheduleRow = {
   id: string;
   enabled: boolean;
-  cron_expression: string | null;
+  cronExpression: string | null;
 };
 type ScheduleExecutionRow = {
   name: string;
   prompt: string;
-  cron_expression: string | null;
-  working_directory: string | null;
-  agent_cli: string | null;
+  workingDirectory: string | null;
+  agentCli: string | null;
   model: string;
-  permission_mode: string;
+  permissionMode: string;
 };
 
 const scheduleJobs = new Map<string, ScheduledTask>();
+
+const cronField = String.raw`(?:\*|\d{1,2})(?:-\d{1,2})?(?:\/\d{1,2})?`;
+const cronExpressionRegex = new RegExp(
+  String.raw`^${cronField}(?:,${cronField})* ${cronField}(?:,${cronField})* ${cronField}(?:,${cronField})* ${cronField}(?:,${cronField})* ${cronField}(?:,${cronField})*$`
+);
+
+const CONVERSION_TIMEOUT_MS = 60_000;
 
 function minuteStart(date = new Date()) {
   const d = new Date(date);
@@ -58,20 +55,25 @@ function permissionModeArg(mode: string) {
   }
 }
 
+async function api<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${WEB_SERVER_URL}${path}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+  });
+  return res.json() as Promise<T>;
+}
+
 async function sendNotification(title: string, body?: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') {
-  await fetch(`${WEB_SERVER_URL}/api/notifications`, {
+  await api('/api/notifications', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, body, type }),
   }).catch(() => {});
 }
 
 async function getAgentCli(): Promise<AgentCli> {
   try {
-    const [setting] = await sql<{ value: string }[]>`
-      SELECT value FROM app_settings WHERE key = ${AGENT_CLI_SETTING_KEY}
-    `;
-    return normalizeAgentCli(setting?.value);
+    const { data } = await api<{ data: Record<string, string> }>('/api/settings');
+    return normalizeAgentCli(data[AGENT_CLI_SETTING_KEY]);
   } catch {
     return DEFAULT_AGENT_CLI;
   }
@@ -81,36 +83,30 @@ function commandForAgentCli(agentCli: AgentCli, schedule: ScheduleExecutionRow, 
   if (agentCli === 'codex') {
     return {
       command: 'codex',
-      args: [
-        'exec',
-        '--ephemeral',
-        '--skip-git-repo-check',
-        '--color',
-        'never',
-        '-s',
-        'workspace-write',
-        prompt,
-      ],
+      args: ['exec', '--ephemeral', '--skip-git-repo-check', '--color', 'never', '-s', 'workspace-write', prompt],
     };
   }
-
   return {
     command: 'claude',
-    args: [
-      '--print',
-      prompt,
-      '--model',
-      schedule.model,
-      '--permission-mode',
-      permissionModeArg(schedule.permission_mode),
-    ],
+    args: ['--print', prompt, '--model', schedule.model, '--permission-mode', permissionModeArg(schedule.permissionMode)],
+  };
+}
+
+function commandForConversion(agentCli: AgentCli, prompt: string) {
+  if (agentCli === 'codex') {
+    return {
+      command: 'codex',
+      args: ['exec', '--ephemeral', '--skip-git-repo-check', '--color', 'never', prompt],
+    };
+  }
+  return {
+    command: 'claude',
+    args: ['--print', prompt],
   };
 }
 
 async function runTask(taskId: string, scheduleId: string) {
-  const [schedule] = await sql<ScheduleExecutionRow[]>`
-    SELECT name, prompt, cron_expression, working_directory, agent_cli, model, permission_mode FROM schedules WHERE id = ${scheduleId}
-  `;
+  const { data: schedule } = await api<{ data: ScheduleExecutionRow | null }>(`/api/schedules/${scheduleId}`);
 
   if (!schedule) {
     console.error(`Schedule ${scheduleId} not found`);
@@ -118,21 +114,21 @@ async function runTask(taskId: string, scheduleId: string) {
   }
 
   const builtPrompt = schedule.prompt;
-
   console.log(`[task:${taskId}] running — ${builtPrompt.slice(0, 80)}`);
 
-  await sql`
-    UPDATE cron_tasks SET status = 'running', started_at = now() WHERE id = ${taskId}
-  `;
+  await api(`/api/cron-tasks/${taskId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'running', startedAt: new Date().toISOString() }),
+  });
 
   let output = '';
   let exitCode = 0;
   let status = 'completed';
 
   try {
-    const agentCli = schedule.agent_cli ? normalizeAgentCli(schedule.agent_cli) : await getAgentCli();
+    const agentCli = schedule.agentCli ? normalizeAgentCli(schedule.agentCli) : await getAgentCli();
     const { command, args } = commandForAgentCli(agentCli, schedule, builtPrompt);
-    const child = exec(command, args, { cwd: schedule.working_directory ?? process.cwd() });
+    const child = exec(command, args, { cwd: schedule.workingDirectory ?? process.cwd() });
     child.child.stdin?.end();
     const result = await child;
     output = result.stdout;
@@ -143,11 +139,10 @@ async function runTask(taskId: string, scheduleId: string) {
     status = 'failed';
   }
 
-  await sql`
-    UPDATE cron_tasks
-    SET status = ${status}, output = ${output}, exit_code = ${exitCode}, finished_at = now()
-    WHERE id = ${taskId}
-  `;
+  await api(`/api/cron-tasks/${taskId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status, output, exitCode, finishedAt: new Date().toISOString() }),
+  });
 
   console.log(`[task:${taskId}] ${status}`);
 
@@ -160,23 +155,9 @@ async function runTask(taskId: string, scheduleId: string) {
 }
 
 async function enqueueScheduleRun(scheduleId: string, dueAt: Date) {
-  await sql.begin(async tx => {
-    const [updated] = await tx`
-      UPDATE schedules
-      SET last_run_at = ${dueAt}, updated_at = now()
-      WHERE id = ${scheduleId}
-        AND enabled = true
-        AND cron_expression IS NOT NULL
-        AND (last_run_at IS NULL OR last_run_at < ${dueAt})
-      RETURNING id
-    `;
-
-    if (!updated) return;
-
-    await tx`
-      INSERT INTO cron_tasks (schedule_id, status, triggered_by, scheduled_for)
-      VALUES (${scheduleId}, 'pending', 'schedule', ${dueAt})
-    `;
+  await api(`/api/schedules/${scheduleId}/run`, {
+    method: 'POST',
+    body: JSON.stringify({ scheduledFor: dueAt.toISOString() }),
   });
 }
 
@@ -191,26 +172,22 @@ async function unregisterSchedule(scheduleId: string) {
 async function registerSchedule(scheduleId: string) {
   await unregisterSchedule(scheduleId);
 
-  const [schedule] = await sql<ScheduleRow[]>`
-    SELECT id, enabled, cron_expression
-    FROM schedules
-    WHERE id = ${scheduleId}
-  `;
+  const { data: schedule } = await api<{ data: ScheduleRow | null }>(`/api/schedules/${scheduleId}`);
 
-  if (!schedule || !schedule.enabled || !schedule.cron_expression) return;
+  if (!schedule || !schedule.enabled || !schedule.cronExpression) return;
 
-  if (!cron.validate(schedule.cron_expression)) {
-    console.error(`[scheduler:${schedule.id}] invalid cron expression: ${schedule.cron_expression}`);
+  if (!cron.validate(schedule.cronExpression)) {
+    console.error(`[scheduler:${schedule.id}] invalid cron expression: ${schedule.cronExpression}`);
     await sendNotification(
       'Invalid schedule cron expression',
-      `Schedule ${schedule.id} has invalid cron expression: ${schedule.cron_expression}`,
+      `Schedule ${schedule.id} has invalid cron expression: ${schedule.cronExpression}`,
       'error'
     );
     return;
   }
 
   const job = cron.schedule(
-    schedule.cron_expression,
+    schedule.cronExpression,
     (context: TaskContext) => {
       const dueAt = minuteStart(context.date);
       enqueueScheduleRun(schedule.id, dueAt).catch(err => console.error(`[scheduler:${schedule.id}] error`, err));
@@ -219,7 +196,7 @@ async function registerSchedule(scheduleId: string) {
   );
 
   scheduleJobs.set(schedule.id, job);
-  console.log(`[scheduler:${schedule.id}] registered ${schedule.cron_expression}`);
+  console.log(`[scheduler:${schedule.id}] registered ${schedule.cronExpression}`);
 }
 
 async function registerAllSchedules() {
@@ -228,35 +205,104 @@ async function registerAllSchedules() {
   }
   scheduleJobs.clear();
 
-  const schedules = await sql<ScheduleRow[]>`
-    SELECT id, enabled, cron_expression
-    FROM schedules
-    WHERE enabled = true AND cron_expression IS NOT NULL
-  `;
+  const { data: allSchedules } = await api<{ data: ScheduleRow[] }>('/api/schedules');
+  const enabled = allSchedules.filter(s => s.enabled && s.cronExpression);
 
-  await Promise.all(schedules.map(schedule => registerSchedule(schedule.id)));
+  await Promise.all(enabled.map(s => registerSchedule(s.id)));
   console.log(`[scheduler] registered ${scheduleJobs.size} schedule(s)`);
 }
 
-async function main() {
-  console.log(`Daemon started — listening on cron_task_pending`);
-  console.log(`Web server: ${WEB_SERVER_URL}`);
+async function convertCronExpression(description: string): Promise<{ expression: string } | { error: string; status: number }> {
+  const prompt = `Convert this schedule description to a cron expression. Reply with ONLY the cron expression (5 fields: minute hour day month weekday), nothing else, no explanation.\n\nDescription: ${description}`;
 
-  await sql.listen('cron_task_pending', async (payload) => {
-    const { id, schedule_id } = JSON.parse(payload) as TaskPayload;
-    runTask(id, schedule_id).catch(err => console.error(`[task:${id}] error`, err));
-  });
-
-  await sql.listen('schedule_changed', async (payload) => {
-    const { id, operation } = JSON.parse(payload) as SchedulePayload;
-    if (operation === 'DELETE') {
-      unregisterSchedule(id).catch(err => console.error(`[scheduler:${id}] error`, err));
-      return;
+  try {
+    const agentCli = await getAgentCli();
+    const { command, args } = commandForConversion(agentCli, prompt);
+    const child = exec(command, args, { timeout: CONVERSION_TIMEOUT_MS });
+    child.child.stdin?.end();
+    const { stdout } = await child;
+    const expression = stdout
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .find(line => cronExpressionRegex.test(line));
+    if (!expression) {
+      return { error: 'generated expression is not a valid 5-field cron expression', status: 422 };
     }
-    registerSchedule(id).catch(err => console.error(`[scheduler:${id}] error`, err));
-  });
+    return { expression };
+  } catch (err: unknown) {
+    const e = err as { message?: string };
+    return { error: e.message ?? 'failed to convert', status: 500 };
+  }
+}
 
+// ─── HTTP server ──────────────────────────────────────────────────────────────
+
+async function readBody(req: http.IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', chunk => { data += chunk; });
+    req.on('end', () => {
+      try { resolve(data ? JSON.parse(data) : {}); }
+      catch { reject(new Error('Invalid JSON')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+function respond(res: http.ServerResponse, status: number, body: unknown) {
+  const json = JSON.stringify(body);
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(json);
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url ?? '/', `http://localhost:${DAEMON_PORT}`);
+  const method = req.method ?? 'GET';
+
+  try {
+    if (method === 'POST' && url.pathname === '/tasks/run') {
+      const { taskId, scheduleId } = await readBody(req) as { taskId: string; scheduleId: string };
+      runTask(taskId, scheduleId).catch(err => console.error(`[task:${taskId}] error`, err));
+      return respond(res, 202, { ok: true });
+    }
+
+    if (method === 'POST' && url.pathname === '/schedules/register') {
+      const { scheduleId } = await readBody(req) as { scheduleId: string };
+      registerSchedule(scheduleId).catch(err => console.error(`[scheduler:${scheduleId}] error`, err));
+      return respond(res, 202, { ok: true });
+    }
+
+    const deleteMatch = url.pathname.match(/^\/schedules\/([^/]+)$/);
+    if (method === 'DELETE' && deleteMatch) {
+      const scheduleId = deleteMatch[1];
+      unregisterSchedule(scheduleId).catch(err => console.error(`[scheduler:${scheduleId}] error`, err));
+      return respond(res, 202, { ok: true });
+    }
+
+    if (method === 'POST' && url.pathname === '/cron-expression') {
+      const { description } = await readBody(req) as { description: string };
+      if (!description) return respond(res, 400, { error: 'description is required' });
+      const result = await convertCronExpression(description);
+      if ('status' in result) return respond(res, result.status, { error: result.error });
+      return respond(res, 200, { data: result });
+    }
+
+    respond(res, 404, { error: 'Not found' });
+  } catch (err: unknown) {
+    const e = err as { message?: string };
+    respond(res, 500, { error: e.message ?? 'Internal error' });
+  }
+});
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
+async function main() {
   await registerAllSchedules();
+
+  server.listen(DAEMON_PORT, () => {
+    console.log(`Daemon HTTP server listening on port ${DAEMON_PORT}`);
+    console.log(`Web server: ${WEB_SERVER_URL}`);
+  });
 }
 
 main().catch(err => {
