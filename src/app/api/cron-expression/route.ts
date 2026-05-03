@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '@/db';
 import { users } from '@/db/schema';
 
-const DAEMON_URL = process.env.DAEMON_URL ?? 'http://localhost:3001';
+const CONDUCTOR_URL = process.env.CONDUCTOR_URL ?? 'http://localhost:3001';
 
 export async function POST(req: NextRequest) {
   const { description, agentUserId } = await req.json() as { description: string; agentUserId?: string };
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'agent user not found' }, { status: 404 });
   }
 
-  const res = await fetch(`${DAEMON_URL}/cron-expression`, {
+  const res = await fetch(`${CONDUCTOR_URL}/cron-expression`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

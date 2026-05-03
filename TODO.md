@@ -1,5 +1,34 @@
 # TODO
 
+## Realtime Issue Updates
+
+Goal: keep issue list, board, and detail views in sync when Conductor moves or edits issues outside the current browser session.
+
+Current state:
+- Browser issue views fetch issue data on load.
+- Local drag/drop and detail edits optimistically update the current view.
+- Conductor can update an issue through the API, but open browser views do not refresh after that server-side change.
+- Existing SSE support is notification-specific: `/api/notifications/stream` only sends notification payloads to the notification bell.
+
+Recommended approach:
+- Use Server-Sent Events for one-way server-to-browser issue change notifications.
+- Add an issue event stream, e.g. `/api/issues/stream`, instead of overloading notification events.
+- Publish an event after issue create/update/delete and after Conductor-driven moves.
+- Event payload should include enough routing metadata to refresh cheaply:
+  - `type`: `issue.created` | `issue.updated` | `issue.deleted`
+  - `issueId`
+  - `teamId`
+  - changed fields, especially `statusId`, `sortOrder`, `assigneeId`, `projectId`, `priority`, `labelIds`
+  - `updatedAt`
+- Subscribe from `/issues`, issue detail pages, and project issue lists.
+- On relevant events, either patch local state from the payload or refetch the affected issue/list.
+
+Implementation notes:
+- Start with refetching affected data after an event; optimize into local patching only if refetch churn becomes a problem.
+- Filter client-side by active team/project/view query so unrelated team events do not disturb the current page.
+- Keep notifications separate from data freshness; a conductor move may update the board without needing a visible notification.
+- If the app runs across multiple Node processes or serverless instances, the current module-level subscriber pattern will not be enough; use a shared pub/sub backend such as Redis, Postgres listen/notify, or a hosted realtime channel.
+
 ## Visual View Query Composer
 
 Goal: make the Views page help users compose saved issue query expressions visually, without building a full parser-backed query builder.
