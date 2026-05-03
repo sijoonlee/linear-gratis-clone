@@ -3,14 +3,15 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useTeam } from '@/contexts/team-context';
-import { Plus, CalendarClock, Play, Sparkles } from 'lucide-react';
-import {
-  AGENT_CLI_OPTIONS,
-  AGENT_CLI_SETTING_KEY,
-  DEFAULT_AGENT_CLI,
-  normalizeAgentCli,
-  type AgentCli,
-} from '@/lib/agent-cli';
+import { Bot, Plus, CalendarClock, Play, Sparkles } from 'lucide-react';
+
+type AgentUser = {
+  id: string;
+  name: string;
+  agentCli: string | null;
+  agentModel: string | null;
+  permissionMode: string | null;
+};
 
 type Schedule = {
   id: string;
@@ -19,14 +20,10 @@ type Schedule = {
   prompt: string;
   cronExpression: string | null;
   workingDirectory: string | null;
-  agentCli: AgentCli;
-  model: string;
-  permissionMode: string;
   enabled: boolean;
+  agentUser: AgentUser | null;
 };
 
-const MODELS = ['claude-sonnet-4-6', 'claude-opus-4-5', 'claude-haiku-4-5-20251001'];
-const PERMISSION_MODES = ['ask', 'auto', 'accept-edits', 'plan'];
 const CONVERSION_TIMEOUT_MS = 65_000;
 
 async function notify(title: string, body?: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') {
@@ -40,6 +37,7 @@ async function notify(title: string, body?: string, type: 'info' | 'success' | '
 export default function SchedulesPage() {
   const { activeTeam } = useTeam();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [agentUsers, setAgentUsers] = useState<AgentUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({
@@ -47,14 +45,11 @@ export default function SchedulesPage() {
     prompt: '',
     workingDirectory: '',
     cronExpression: '',
-    agentCli: DEFAULT_AGENT_CLI,
-    model: 'claude-sonnet-4-6',
-    permissionMode: 'ask',
+    agentUserId: '',
   });
   const [cronDescription, setCronDescription] = useState('');
   const [converting, setConverting] = useState(false);
   const [conversionError, setConversionError] = useState<string | null>(null);
-  const [agentCli, setAgentCli] = useState<AgentCli>(DEFAULT_AGENT_CLI);
 
   const load = useCallback(async () => {
     if (!activeTeam) return;
@@ -68,19 +63,15 @@ export default function SchedulesPage() {
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    fetch('/api/settings')
-      .then(r => r.json() as Promise<{ data: Record<string, string> }>)
-      .then(({ data }) => {
-        const next = normalizeAgentCli(data[AGENT_CLI_SETTING_KEY]);
-        setAgentCli(next);
-        setForm(f => ({ ...f, agentCli: next }));
-      })
+    fetch('/api/users')
+      .then(r => r.json() as Promise<{ data: (AgentUser & { type: string })[] }>)
+      .then(({ data }) => setAgentUsers(data.filter(u => u.type === 'agent')))
       .catch(() => {});
   }, []);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    if (!activeTeam || !form.name || !form.prompt) return;
+    if (!activeTeam || !form.name || !form.prompt || !form.agentUserId) return;
     await fetch('/api/schedules', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -90,12 +81,10 @@ export default function SchedulesPage() {
         prompt: form.prompt,
         workingDirectory: form.workingDirectory.trim() || null,
         cronExpression: form.cronExpression || null,
-        agentCli: form.agentCli,
-        model: form.model,
-        permissionMode: form.permissionMode,
+        agentUserId: form.agentUserId,
       }),
     });
-    setForm({ name: '', prompt: '', workingDirectory: '', cronExpression: '', agentCli, model: 'claude-sonnet-4-6', permissionMode: 'ask' });
+    setForm({ name: '', prompt: '', workingDirectory: '', cronExpression: '', agentUserId: '' });
     setCreating(false);
     load();
   }
@@ -110,6 +99,12 @@ export default function SchedulesPage() {
 
   async function convertCronExpression() {
     if (!cronDescription.trim()) return;
+    if (!form.agentUserId) {
+      const message = 'Select an AI agent before converting a schedule description.';
+      setConversionError(message);
+      await notify('Cron expression conversion failed', message, 'warning');
+      return;
+    }
     setConverting(true);
     setConversionError(null);
     const controller = new AbortController();
@@ -119,7 +114,7 @@ export default function SchedulesPage() {
       const res = await fetch('/api/cron-expression', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description: cronDescription }),
+        body: JSON.stringify({ description: cronDescription, agentUserId: form.agentUserId }),
         signal: controller.signal,
       });
       if (!res.ok) {
@@ -180,7 +175,7 @@ export default function SchedulesPage() {
           <textarea
             value={form.prompt}
             onChange={e => setForm(f => ({ ...f, prompt: e.target.value }))}
-            placeholder={form.agentCli === 'claude' ? 'Instructions for Claude…' : 'Instructions for Codex…'}
+            placeholder="Instructions for the agent…"
             rows={3}
             className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary/50 placeholder:text-muted-foreground resize-none"
           />
@@ -190,18 +185,32 @@ export default function SchedulesPage() {
             placeholder="Working directory (optional; defaults to daemon directory)"
             className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary/50 placeholder:text-muted-foreground"
           />
+
+          {/* Agent user picker */}
           <div>
-            <span className="text-xs text-muted-foreground block mb-1">Agent CLI</span>
+            <span className="text-xs text-muted-foreground block mb-1">AI Agent</span>
             <select
-              value={form.agentCli}
-              onChange={e => setForm(f => ({ ...f, agentCli: normalizeAgentCli(e.target.value) }))}
+              value={form.agentUserId}
+              onChange={e => setForm(f => ({ ...f, agentUserId: e.target.value }))}
               className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary/50"
             >
-              {AGENT_CLI_OPTIONS.map(option => (
-                <option key={option.value} value={option.value}>{option.label}</option>
+              <option value="">Select an AI agent</option>
+              {agentUsers.map(u => (
+                <option key={u.id} value={u.id}>{u.name}</option>
               ))}
             </select>
+            {agentUsers.length === 0 && (
+              <p className="text-xs text-muted-foreground mt-1">
+                No AI agents yet — create one in the Members page.
+              </p>
+            )}
+            {agentUsers.length > 0 && !form.agentUserId && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Required for schedule execution and cron expression conversion.
+              </p>
+            )}
           </div>
+
           <div className="space-y-1.5">
             <div className="flex gap-2">
               <input
@@ -214,7 +223,7 @@ export default function SchedulesPage() {
               <button
                 type="button"
                 onClick={convertCronExpression}
-                disabled={converting || !cronDescription.trim()}
+                disabled={converting || !cronDescription.trim() || !form.agentUserId}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 text-primary rounded text-xs font-medium hover:bg-primary/20 disabled:opacity-50 transition-colors shrink-0"
               >
                 <Sparkles className="h-3.5 w-3.5" />
@@ -231,45 +240,18 @@ export default function SchedulesPage() {
               <p className="text-xs text-destructive">{conversionError}</p>
             )}
           </div>
-          {form.agentCli === 'claude' ? (
-            <div className="flex gap-3">
-              <div className="flex-1">
-                <span className="text-xs text-muted-foreground block mb-1">Model</span>
-                <select
-                  value={form.model}
-                  onChange={e => setForm(f => ({ ...f, model: e.target.value }))}
-                  className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary/50"
-                >
-                  {MODELS.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-              <div className="flex-1">
-                <span className="text-xs text-muted-foreground block mb-1">Permission mode</span>
-                <select
-                  value={form.permissionMode}
-                  onChange={e => setForm(f => ({ ...f, permissionMode: e.target.value }))}
-                  className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary/50"
-                >
-                  {PERMISSION_MODES.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
-              Codex CLI is selected in Settings. Schedules will run with Codex exec using this working directory, or the daemon directory if left blank.
-            </div>
-          )}
+
           <div className="flex items-center gap-2">
             <button
               type="submit"
-              disabled={!form.name || !form.prompt}
+              disabled={!form.name || !form.prompt || !form.agentUserId}
               className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-xs font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
             >
               Save
             </button>
             <button type="button" onClick={() => setCreating(false)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Cancel</button>
-            {(!form.name || !form.prompt) && (
-              <span className="text-xs text-muted-foreground">Name and prompt are required</span>
+            {(!form.name || !form.prompt || !form.agentUserId) && (
+              <span className="text-xs text-muted-foreground">Name, prompt, and AI agent are required</span>
             )}
           </div>
         </form>
@@ -301,9 +283,16 @@ export default function SchedulesPage() {
                 <span className="text-xs font-mono text-muted-foreground shrink-0">
                   {s.cronExpression ?? 'Manual'}
                 </span>
-                <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
-                  {normalizeAgentCli(s.agentCli) === 'claude' ? s.model.replace('claude-', '').replace(/-\d{8}$/, '') : 'codex'}
-                </span>
+                {s.agentUser ? (
+                  <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
+                    <Bot className="h-3 w-3" />
+                    {s.agentUser.name}
+                  </span>
+                ) : (
+                  <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
+                    No agent
+                  </span>
+                )}
                 <button
                   onClick={() => runSchedule(s)}
                   title="Run now"

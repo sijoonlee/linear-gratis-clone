@@ -24,6 +24,7 @@ type Project = {
   description: string | null;
   status: string;
   color: string | null;
+  workingDirectory: string;
   startDate: string | null;
   targetDate: string | null;
 };
@@ -47,6 +48,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [workingDirectory, setWorkingDirectory] = useState('');
   const [assignedRoadmaps, setAssignedRoadmaps] = useState<Roadmap[]>([]);
   const [allRoadmaps, setAllRoadmaps] = useState<Roadmap[]>([]);
   const [roadmapPickerOpen, setRoadmapPickerOpen] = useState(false);
@@ -65,6 +67,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       setIssues(iss);
       setName(proj.name);
       setDescription(proj.description ?? '');
+      setWorkingDirectory(proj.workingDirectory);
       setAllRoadmaps(allR);
       setLoading(false);
     }
@@ -100,6 +103,25 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       body: JSON.stringify({ description }),
     });
     setProject(p => p ? { ...p, description } : p);
+  }
+
+  async function saveWorkingDirectory() {
+    const trimmed = workingDirectory.trim();
+    if (!project || !trimmed || trimmed === project.workingDirectory) {
+      setWorkingDirectory(project?.workingDirectory ?? trimmed);
+      return;
+    }
+    const res = await fetch(`/api/projects/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workingDirectory: trimmed }),
+    });
+    if (!res.ok) {
+      setWorkingDirectory(project.workingDirectory);
+      return;
+    }
+    setProject(p => p ? { ...p, workingDirectory: trimmed } : p);
+    setWorkingDirectory(trimmed);
   }
 
   async function setStatus(status: string) {
@@ -227,6 +249,18 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
               setProject(p => p ? { ...p, targetDate: iso } : p);
             }}
           />
+
+          <div>
+            <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Working directory</p>
+            <input
+              required
+              value={workingDirectory}
+              onChange={e => setWorkingDirectory(e.target.value)}
+              onBlur={saveWorkingDirectory}
+              className="w-full bg-transparent border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-primary"
+              placeholder="/path/to/project"
+            />
+          </div>
 
           <div>
             <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Roadmaps</p>

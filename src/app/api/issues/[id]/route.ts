@@ -24,12 +24,17 @@ export async function GET(_req: NextRequest, { params }: Params) {
       assigneeId: issues.assigneeId,
       assigneeName: users.name,
       assigneeAvatarUrl: users.avatarUrl,
+      assigneeType: users.type,
+      assigneeAgentCli: users.agentCli,
+      assigneeAgentModel: users.agentModel,
+      assigneePermissionMode: users.permissionMode,
       statusId: issues.statusId,
       statusName: issueStatuses.name,
       statusColor: issueStatuses.color,
       statusType: issueStatuses.type,
       projectName: projects.name,
       projectColor: projects.color,
+      projectWorkingDirectory: projects.workingDirectory,
     })
     .from(issues)
     .leftJoin(issueStatuses, eq(issues.statusId, issueStatuses.id))

@@ -124,7 +124,7 @@ If no user exists yet, click **Register** in the sidebar to create one, then go 
 | `users` | App users — name, email, avatar |
 | `teams` | Workspace groups with name and identifier (e.g. `ENG`) |
 | `team_members` | M:N join between users and teams, with role (owner/member) |
-| `issue_statuses` | Per-team statuses (Backlog, Todo, In Progress, Done, Cancelled) |
+| `issue_statuses` | Per-team issue workflow statuses (Backlog, Todo, Plan review, Coding in Process, Code review, Done, Cancelled) |
 | `labels` | Per-team labels with color |
 | `projects` | Collections of issues with status and dates |
 | `issues` | Core entity — title, description, status, priority, assignee, estimate, due date |
@@ -227,7 +227,7 @@ The daemon does two jobs:
 
 When a registered cron job fires, the daemon inserts a pending `cron_task`; the existing `cron_task_pending` trigger then wakes the task runner.
 
-Scheduled tasks and cron-expression conversion use the agent CLI selected in Settings. The app currently supports Claude CLI and Codex CLI, with Claude as the default.
+Scheduled tasks and cron-expression conversion use the AI agent selected on the schedule. The app currently supports Claude CLI and Codex CLI agent users.
 
 ```bash
 # Terminal 1 — web server

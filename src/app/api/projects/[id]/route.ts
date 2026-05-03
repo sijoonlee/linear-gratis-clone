@@ -19,12 +19,17 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     description: string;
     status: 'backlog' | 'planned' | 'in_progress' | 'completed' | 'cancelled';
     color: string;
+    workingDirectory: string;
     startDate: string;
     targetDate: string;
   }>;
   const { startDate, targetDate, ...rest } = body;
+  if (body.workingDirectory !== undefined && !body.workingDirectory.trim()) {
+    return NextResponse.json({ error: 'workingDirectory is required' }, { status: 400 });
+  }
   const [row] = await db.update(projects).set({
     ...rest,
+    ...(body.workingDirectory !== undefined && { workingDirectory: body.workingDirectory.trim() }),
     ...(startDate !== undefined && { startDate: new Date(startDate) }),
     ...(targetDate !== undefined && { targetDate: new Date(targetDate) }),
     updatedAt: new Date(),

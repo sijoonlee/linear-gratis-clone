@@ -7,6 +7,7 @@ import { useTeam, type Team } from '@/contexts/team-context';
 import { useUser } from '@/contexts/user-context';
 import { NotificationBell } from '@/components/notification-bell';
 import {
+  Bot,
   CheckCircle2,
   Layers,
   CalendarClock,
@@ -50,7 +51,16 @@ function SectionLabel({ label }: { label: string }) {
   );
 }
 
-type UserEntry = { id: string; name: string; email: string; avatarUrl: string | null };
+type UserEntry = {
+  id: string;
+  name: string;
+  email: string;
+  avatarUrl: string | null;
+  type: 'human' | 'agent';
+  agentModel: string | null;
+  agentCli: string | null;
+  permissionMode: string | null;
+};
 
 function UserAvatar({ user, size = 6 }: { user: { name: string; avatarUrl: string | null }; size?: number }) {
   const initials = user.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
@@ -112,13 +122,120 @@ function RegisterForm({ onDone, onCancel }: { onDone: (u: UserEntry) => void; on
   );
 }
 
+const AGENT_CLI_OPTIONS = ['claude', 'codex'] as const;
+type AgentCliOption = typeof AGENT_CLI_OPTIONS[number];
+const AGENT_MODELS_BY_CLI = {
+  claude: ['claude-sonnet-4-6', 'claude-opus-4-7', 'claude-haiku-4-5-20251001'],
+  codex: ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex'],
+} satisfies Record<AgentCliOption, string[]>;
+const PERMISSION_MODES_BY_CLI = {
+  claude: ['ask', 'auto', 'accept-edits', 'plan'],
+  codex: ['ask', 'auto', 'plan'],
+} satisfies Record<AgentCliOption, string[]>;
+
+function isAgentCliOption(value: string): value is AgentCliOption {
+  return AGENT_CLI_OPTIONS.includes(value as AgentCliOption);
+}
+
+function normalizeAgentCliOption(value: string | null | undefined): AgentCliOption {
+  return value && isAgentCliOption(value) ? value : 'claude';
+}
+
+function RegisterAgentForm({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+  const [name, setName] = useState('');
+  const [agentCli, setAgentCli] = useState<AgentCliOption>('claude');
+  const [agentModel, setAgentModel] = useState('claude-sonnet-4-6');
+  const [permissionMode, setPermissionMode] = useState('ask');
+  const [saving, setSaving] = useState(false);
+  const agentModels = AGENT_MODELS_BY_CLI[agentCli];
+  const permissionModes = PERMISSION_MODES_BY_CLI[agentCli];
+
+  function handleAgentCliChange(cli: string) {
+    if (!isAgentCliOption(cli)) return;
+    setAgentCli(cli);
+    setAgentModel(AGENT_MODELS_BY_CLI[cli][0]);
+    setPermissionMode(PERMISSION_MODES_BY_CLI[cli][0]);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setSaving(true);
+    const email = `${name.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}@agent`;
+    await fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name.trim(),
+        email,
+        type: 'agent',
+        agentCli,
+        agentModel,
+        permissionMode,
+      }),
+    });
+    setSaving(false);
+    onDone();
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="p-2 space-y-1.5 border-t border-border">
+      <p className="text-xs font-medium text-muted-foreground px-1">New AI agent</p>
+      <input
+        autoFocus
+        value={name}
+        onChange={e => setName(e.target.value)}
+        placeholder="Name (e.g. Claude Sonnet)"
+        className="w-full px-2 py-1 text-xs bg-background border border-border rounded outline-none focus:ring-1 focus:ring-ring"
+      />
+      <select
+        value={agentCli}
+        onChange={e => handleAgentCliChange(e.target.value)}
+        className="w-full px-2 py-1 text-xs bg-background border border-border rounded outline-none focus:ring-1 focus:ring-ring"
+      >
+        {AGENT_CLI_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+      </select>
+      <select
+        value={agentModel}
+        onChange={e => setAgentModel(e.target.value)}
+        className="w-full px-2 py-1 text-xs bg-background border border-border rounded outline-none focus:ring-1 focus:ring-ring"
+      >
+        {agentModels.map(m => <option key={m} value={m}>{m}</option>)}
+      </select>
+      <select
+        value={permissionMode}
+        onChange={e => setPermissionMode(e.target.value)}
+        className="w-full px-2 py-1 text-xs bg-background border border-border rounded outline-none focus:ring-1 focus:ring-ring"
+      >
+        {permissionModes.map(m => <option key={m} value={m}>{m}</option>)}
+      </select>
+      <div className="flex gap-1.5 pt-0.5">
+        <button
+          type="submit"
+          disabled={saving || !name.trim()}
+          className="flex-1 py-1 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 transition-colors"
+        >
+          {saving ? 'Creating…' : 'Create'}
+        </button>
+        <button type="button" onClick={onCancel} className="px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function UserDisplay() {
   const { currentUser, loading, setCurrentUser } = useUser();
   const [open, setOpen] = useState(false);
   const [allUsers, setAllUsers] = useState<UserEntry[]>([]);
   const [registering, setRegistering] = useState(false);
+  const [registeringAgent, setRegisteringAgent] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editingName, setEditingName] = useState<string | null>(null);
+  const [editingAgentCli, setEditingAgentCli] = useState<AgentCliOption>('claude');
+  const [editingAgentModel, setEditingAgentModel] = useState('claude-sonnet-4-6');
+  const [editingPermissionMode, setEditingPermissionMode] = useState('ask');
   const [savingName, setSavingName] = useState(false);
 
   function openMenu() {
@@ -127,6 +244,7 @@ function UserDisplay() {
       .then(({ data }) => setAllUsers(data));
     setOpen(true);
     setRegistering(false);
+    setRegisteringAgent(false);
     setConfirmDelete(false);
     setEditingName(null);
   }
@@ -143,6 +261,24 @@ function UserDisplay() {
   function handleSwitch(u: UserEntry) {
     setCurrentUser(u);
     setOpen(false);
+  }
+
+  function startEditingUser() {
+    const cli = normalizeAgentCliOption(currentUser?.agentCli);
+    setEditingName(currentUser?.name ?? '');
+    setEditingAgentCli(cli);
+    setEditingAgentModel(currentUser?.agentModel ?? AGENT_MODELS_BY_CLI[cli][0]);
+    setEditingPermissionMode(currentUser?.permissionMode ?? PERMISSION_MODES_BY_CLI[cli][0]);
+    setRegistering(false);
+    setRegisteringAgent(false);
+    setConfirmDelete(false);
+  }
+
+  function handleEditingAgentCliChange(cli: string) {
+    if (!isAgentCliOption(cli)) return;
+    setEditingAgentCli(cli);
+    setEditingAgentModel(AGENT_MODELS_BY_CLI[cli][0]);
+    setEditingPermissionMode(PERMISSION_MODES_BY_CLI[cli][0]);
   }
 
   function handleRegistered(u: UserEntry) {
@@ -204,10 +340,18 @@ function UserDisplay() {
                     e.preventDefault();
                     if (!editingName.trim()) return;
                     setSavingName(true);
+                    const payload = currentUser.type === 'agent'
+                      ? {
+                          name: editingName.trim(),
+                          agentCli: editingAgentCli,
+                          agentModel: editingAgentModel,
+                          permissionMode: editingPermissionMode,
+                        }
+                      : { name: editingName.trim() };
                     const res = await fetch(`/api/users/${currentUser.id}`, {
                       method: 'PATCH',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ name: editingName.trim() }),
+                      body: JSON.stringify(payload),
                     });
                     const { data } = await res.json() as { data: UserEntry };
                     setCurrentUser(data);
@@ -226,6 +370,31 @@ function UserDisplay() {
                       className="w-full px-1.5 py-0.5 text-xs bg-background border border-border rounded outline-none focus:ring-1 focus:ring-ring"
                     />
                     <p className="text-xs text-muted-foreground truncate px-1">{currentUser.email}</p>
+                    {currentUser.type === 'agent' && (
+                      <div className="grid grid-cols-1 gap-1 pt-1">
+                        <select
+                          value={editingAgentCli}
+                          onChange={e => handleEditingAgentCliChange(e.target.value)}
+                          className="w-full px-1.5 py-0.5 text-xs bg-background border border-border rounded outline-none focus:ring-1 focus:ring-ring"
+                        >
+                          {AGENT_CLI_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        <select
+                          value={editingAgentModel}
+                          onChange={e => setEditingAgentModel(e.target.value)}
+                          className="w-full px-1.5 py-0.5 text-xs bg-background border border-border rounded outline-none focus:ring-1 focus:ring-ring"
+                        >
+                          {AGENT_MODELS_BY_CLI[editingAgentCli].map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                        <select
+                          value={editingPermissionMode}
+                          onChange={e => setEditingPermissionMode(e.target.value)}
+                          className="w-full px-1.5 py-0.5 text-xs bg-background border border-border rounded outline-none focus:ring-1 focus:ring-ring"
+                        >
+                          {PERMISSION_MODES_BY_CLI[editingAgentCli].map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                      </div>
+                    )}
                   </div>
                   <button type="submit" disabled={savingName || !editingName.trim()} className="p-1 text-primary hover:opacity-70 disabled:opacity-40 transition-opacity">
                     <Check className="h-3.5 w-3.5" />
@@ -240,9 +409,14 @@ function UserDisplay() {
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-semibold truncate">{currentUser.name}</p>
                     <p className="text-xs text-muted-foreground truncate">{currentUser.email}</p>
+                    {currentUser.type === 'agent' && (
+                      <p className="text-xs text-muted-foreground truncate">
+                        {[currentUser.agentCli, currentUser.agentModel, currentUser.permissionMode].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
                   </div>
                   <button
-                    onClick={() => { setEditingName(currentUser.name); setRegistering(false); setConfirmDelete(false); }}
+                    onClick={startEditingUser}
                     className="p-1 rounded opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground hover:bg-accent transition-all"
                   >
                     <Pencil className="h-3 w-3" />
@@ -261,7 +435,13 @@ function UserDisplay() {
                   <div className="flex-1 text-left min-w-0">
                     <p className="text-xs font-medium truncate">{u.name}</p>
                     <p className="text-xs text-muted-foreground truncate">{u.email}</p>
+                    {u.type === 'agent' && (
+                      <p className="text-xs text-muted-foreground truncate">
+                        {[u.agentCli, u.agentModel, u.permissionMode].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
                   </div>
+                  {u.type === 'agent' && <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
                 </button>
               ))}
             </div>
@@ -269,11 +449,18 @@ function UserDisplay() {
             {/* Actions */}
             <div className="border-t border-border py-1">
               <button
-                onClick={() => { setRegistering(r => !r); setConfirmDelete(false); }}
+                onClick={() => { setRegistering(r => !r); setRegisteringAgent(false); setConfirmDelete(false); }}
                 className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
               >
                 <UserPlus className="h-3.5 w-3.5 shrink-0" />
                 Register new user
+              </button>
+              <button
+                onClick={() => { setRegisteringAgent(r => !r); setRegistering(false); setConfirmDelete(false); }}
+                className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+              >
+                <Bot className="h-3.5 w-3.5 shrink-0" />
+                Register new AI agent
               </button>
 
               {confirmDelete ? (
@@ -284,7 +471,7 @@ function UserDisplay() {
                 </div>
               ) : (
                 <button
-                  onClick={() => { setConfirmDelete(true); setRegistering(false); }}
+                  onClick={() => { setConfirmDelete(true); setRegistering(false); setRegisteringAgent(false); }}
                   className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-muted-foreground hover:text-destructive hover:bg-accent transition-colors"
                 >
                   <X className="h-3.5 w-3.5 shrink-0" />
@@ -297,6 +484,12 @@ function UserDisplay() {
               <RegisterForm
                 onDone={handleRegistered}
                 onCancel={() => setRegistering(false)}
+              />
+            )}
+            {registeringAgent && (
+              <RegisterAgentForm
+                onDone={() => { setRegisteringAgent(false); setOpen(false); }}
+                onCancel={() => setRegisteringAgent(false)}
               />
             )}
           </div>

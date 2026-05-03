@@ -14,7 +14,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
 export async function PATCH(req: NextRequest, { params }: Params) {
   const { id } = await params;
-  const body = await req.json() as Partial<{ name: string; email: string; avatarUrl: string }>;
+  const body = await req.json() as Partial<{
+    name: string; email: string; avatarUrl: string;
+    agentModel: string; agentCli: string; permissionMode: string;
+  }>;
   const [row] = await db.update(users).set({ ...body, updatedAt: new Date() }).where(eq(users.id, id)).returning();
   if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   return NextResponse.json({ data: row });

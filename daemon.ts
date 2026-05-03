@@ -6,11 +6,10 @@ import cron, { type ScheduledTask, type TaskContext } from 'node-cron';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import {
-  AGENT_CLI_SETTING_KEY,
-  DEFAULT_AGENT_CLI,
   normalizeAgentCli,
   type AgentCli,
 } from './src/lib/agent-cli';
+import { dispatchIssueToPlan } from './src/daemon/issue-orchestrator';
 
 const exec = promisify(execFile);
 
@@ -22,13 +21,16 @@ type ScheduleRow = {
   enabled: boolean;
   cronExpression: string | null;
 };
+type AgentUserRow = {
+  agentCli: string | null;
+  agentModel: string | null;
+  permissionMode: string | null;
+};
 type ScheduleExecutionRow = {
   name: string;
   prompt: string;
   workingDirectory: string | null;
-  agentCli: string | null;
-  model: string;
-  permissionMode: string;
+  agentUser: AgentUserRow | null;
 };
 
 const scheduleJobs = new Map<string, ScheduledTask>();
@@ -55,6 +57,18 @@ function permissionModeArg(mode: string) {
   }
 }
 
+function codexApprovalPolicyArg(mode: string | null | undefined) {
+  switch (mode) {
+    case 'auto': return 'never';
+    case 'plan': return 'never';
+    default: return 'on-request';
+  }
+}
+
+function codexSandboxArg(mode: string | null | undefined) {
+  return mode === 'plan' ? 'read-only' : 'workspace-write';
+}
+
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${WEB_SERVER_URL}${path}`, {
     ...options,
@@ -70,38 +84,46 @@ async function sendNotification(title: string, body?: string, type: 'info' | 'su
   }).catch(() => {});
 }
 
-async function getAgentCli(): Promise<AgentCli> {
-  try {
-    const { data } = await api<{ data: Record<string, string> }>('/api/settings');
-    return normalizeAgentCli(data[AGENT_CLI_SETTING_KEY]);
-  } catch {
-    return DEFAULT_AGENT_CLI;
-  }
-}
-
-function commandForAgentCli(agentCli: AgentCli, schedule: ScheduleExecutionRow, prompt: string) {
+function commandForAgentCli(agentCli: AgentCli, agentUser: AgentUserRow | null, prompt: string) {
   if (agentCli === 'codex') {
+    const args = [
+      '--ask-for-approval',
+      codexApprovalPolicyArg(agentUser?.permissionMode),
+      'exec',
+      '--ephemeral',
+      '--skip-git-repo-check',
+      '--color',
+      'never',
+      '-s',
+      codexSandboxArg(agentUser?.permissionMode),
+    ];
+    const model = agentUser?.agentModel?.trim();
+    if (model) args.push('--model', model);
+    args.push(prompt);
     return {
       command: 'codex',
-      args: ['exec', '--ephemeral', '--skip-git-repo-check', '--color', 'never', '-s', 'workspace-write', prompt],
+      args,
     };
   }
+  const model = agentUser?.agentModel ?? 'claude-sonnet-4-6';
+  const perm = permissionModeArg(agentUser?.permissionMode ?? 'ask');
   return {
     command: 'claude',
-    args: ['--print', prompt, '--model', schedule.model, '--permission-mode', permissionModeArg(schedule.permissionMode)],
+    args: ['--print', prompt, '--model', model, '--permission-mode', perm],
   };
 }
 
-function commandForConversion(agentCli: AgentCli, prompt: string) {
+function commandForConversion(agentUser: AgentUserRow, prompt: string) {
+  const agentCli = normalizeAgentCli(agentUser.agentCli);
   if (agentCli === 'codex') {
     return {
       command: 'codex',
-      args: ['exec', '--ephemeral', '--skip-git-repo-check', '--color', 'never', prompt],
+      args: ['exec', '--ephemeral', '--skip-git-repo-check', '--color', 'never', '--model', 'gpt-5.4-mini', prompt],
     };
   }
   return {
     command: 'claude',
-    args: ['--print', prompt],
+    args: ['--print', prompt, '--model', 'claude-haiku-4-5-20251001', '--allowedTools', ''],
   };
 }
 
@@ -126,8 +148,11 @@ async function runTask(taskId: string, scheduleId: string) {
   let status = 'completed';
 
   try {
-    const agentCli = schedule.agentCli ? normalizeAgentCli(schedule.agentCli) : await getAgentCli();
-    const { command, args } = commandForAgentCli(agentCli, schedule, builtPrompt);
+    if (!schedule.agentUser?.agentCli) {
+      throw new Error('schedule has no configured agent user');
+    }
+    const agentCli = normalizeAgentCli(schedule.agentUser.agentCli);
+    const { command, args } = commandForAgentCli(agentCli, schedule.agentUser, builtPrompt);
     const child = exec(command, args, { cwd: schedule.workingDirectory ?? process.cwd() });
     child.child.stdin?.end();
     const result = await child;
@@ -212,12 +237,15 @@ async function registerAllSchedules() {
   console.log(`[scheduler] registered ${scheduleJobs.size} schedule(s)`);
 }
 
-async function convertCronExpression(description: string): Promise<{ expression: string } | { error: string; status: number }> {
+async function convertCronExpression(description: string, agentUser: AgentUserRow | null): Promise<{ expression: string } | { error: string; status: number }> {
+  if (!agentUser?.agentCli) {
+    return { error: 'agentUser with agentCli is required', status: 400 };
+  }
+
   const prompt = `Convert this schedule description to a cron expression. Reply with ONLY the cron expression (5 fields: minute hour day month weekday), nothing else, no explanation.\n\nDescription: ${description}`;
 
   try {
-    const agentCli = await getAgentCli();
-    const { command, args } = commandForConversion(agentCli, prompt);
+    const { command, args } = commandForConversion(agentUser, prompt);
     const child = exec(command, args, { timeout: CONVERSION_TIMEOUT_MS });
     child.child.stdin?.end();
     const { stdout } = await child;
@@ -280,11 +308,18 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'POST' && url.pathname === '/cron-expression') {
-      const { description } = await readBody(req) as { description: string };
+      const { description, agentUser } = await readBody(req) as { description: string; agentUser?: AgentUserRow | null };
       if (!description) return respond(res, 400, { error: 'description is required' });
-      const result = await convertCronExpression(description);
+      const result = await convertCronExpression(description, agentUser ?? null);
       if ('status' in result) return respond(res, result.status, { error: result.error });
       return respond(res, 200, { data: result });
+    }
+
+    if (method === 'POST' && url.pathname === '/issues/dispatch') {
+      const { issueId } = await readBody(req) as { issueId: string };
+      if (!issueId) return respond(res, 400, { error: 'issueId is required' });
+      dispatchIssueToPlan(issueId, api).catch(err => console.error(`[issue:${issueId}] error`, err));
+      return respond(res, 202, { ok: true });
     }
 
     respond(res, 404, { error: 'Not found' });

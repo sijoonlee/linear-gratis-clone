@@ -11,6 +11,7 @@ type Project = {
   description: string | null;
   status: string;
   color: string | null;
+  workingDirectory: string;
   startDate: string | null;
   targetDate: string | null;
 };
@@ -37,6 +38,7 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
+  const [newWorkingDirectory, setNewWorkingDirectory] = useState('');
 
   const load = useCallback(async () => {
     if (!activeTeam) return;
@@ -51,13 +53,18 @@ export default function ProjectsPage() {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    if (!activeTeam || !newName.trim()) return;
+    if (!activeTeam || !newName.trim() || !newWorkingDirectory.trim()) return;
     await fetch('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ teamId: activeTeam.id, name: newName.trim() }),
+      body: JSON.stringify({
+        teamId: activeTeam.id,
+        name: newName.trim(),
+        workingDirectory: newWorkingDirectory.trim(),
+      }),
     });
     setNewName('');
+    setNewWorkingDirectory('');
     setCreating(false);
     load();
   }
@@ -79,16 +86,34 @@ export default function ProjectsPage() {
       </div>
 
       {creating && (
-        <form onSubmit={handleCreate} className="flex items-center gap-3 px-6 py-3 border-b border-border bg-accent/20">
+        <form onSubmit={handleCreate} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto_auto] items-center gap-3 px-6 py-3 border-b border-border bg-accent/20">
           <input
             autoFocus
+            required
             value={newName}
             onChange={e => setNewName(e.target.value)}
             placeholder="Project name…"
             className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           />
+          <input
+            required
+            value={newWorkingDirectory}
+            onChange={e => setNewWorkingDirectory(e.target.value)}
+            placeholder="Working directory…"
+            className="min-w-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          />
           <button type="submit" className="px-3 py-1 bg-primary text-primary-foreground rounded text-xs font-medium hover:bg-primary/90 transition-colors">Save</button>
-          <button type="button" onClick={() => setCreating(false)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Cancel</button>
+          <button
+            type="button"
+            onClick={() => {
+              setCreating(false);
+              setNewName('');
+              setNewWorkingDirectory('');
+            }}
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Cancel
+          </button>
         </form>
       )}
 
@@ -119,6 +144,7 @@ export default function ProjectsPage() {
                   {p.description && (
                     <p className="text-xs text-muted-foreground truncate mt-0.5">{p.description}</p>
                   )}
+                  <p className="text-xs text-muted-foreground truncate mt-0.5">{p.workingDirectory}</p>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   <span

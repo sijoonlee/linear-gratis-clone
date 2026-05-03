@@ -1,12 +1,17 @@
 CREATE TYPE "public"."issue_priority" AS ENUM('no_priority', 'urgent', 'high', 'medium', 'low');
-CREATE TYPE "public"."issue_status_type" AS ENUM('backlog', 'unstarted', 'started', 'completed', 'cancelled');
+CREATE TYPE "public"."issue_status_type" AS ENUM('backlog', 'todo', 'plan', 'coding_in_process', 'code', 'done', 'cancelled');
 CREATE TYPE "public"."project_status" AS ENUM('backlog', 'planned', 'in_progress', 'completed', 'cancelled');
+CREATE TYPE "public"."user_type" AS ENUM('human', 'agent');
 
 CREATE TABLE "users" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "name" text NOT NULL,
   "email" text NOT NULL,
   "avatar_url" text,
+  "type" "user_type" DEFAULT 'human' NOT NULL,
+  "agent_model" text,
+  "agent_cli" text,
+  "permission_mode" text,
   "created_at" timestamp DEFAULT now() NOT NULL,
   "updated_at" timestamp DEFAULT now() NOT NULL,
   CONSTRAINT "users_email_unique" UNIQUE("email")
@@ -56,6 +61,7 @@ CREATE TABLE "projects" (
   "description" text,
   "status" "project_status" DEFAULT 'planned' NOT NULL,
   "color" text DEFAULT '#5E6AD2',
+  "working_directory" text NOT NULL,
   "start_date" timestamp,
   "target_date" timestamp,
   "created_at" timestamp DEFAULT now() NOT NULL,
@@ -65,14 +71,12 @@ CREATE TABLE "projects" (
 CREATE TABLE "schedules" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "team_id" uuid NOT NULL REFERENCES "public"."teams"("id") ON DELETE cascade,
+  "agent_user_id" uuid NOT NULL REFERENCES "public"."users"("id") ON DELETE restrict,
   "name" text NOT NULL,
   "description" text,
   "prompt" text NOT NULL,
   "cron_expression" text,
   "working_directory" text,
-  "agent_cli" text DEFAULT 'claude' NOT NULL,
-  "model" text DEFAULT 'claude-sonnet-4-6' NOT NULL,
-  "permission_mode" text DEFAULT 'ask' NOT NULL,
   "enabled" boolean DEFAULT true NOT NULL,
   "last_run_at" timestamp,
   "created_at" timestamp DEFAULT now() NOT NULL,
@@ -203,3 +207,24 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER schedule_changed_trigger
 AFTER INSERT OR UPDATE OR DELETE ON schedules
 FOR EACH ROW EXECUTE FUNCTION notify_schedule_changed();
+
+CREATE OR REPLACE FUNCTION notify_issue_changed()
+RETURNS trigger AS $$
+DECLARE
+  issue_id uuid;
+BEGIN
+  issue_id := COALESCE(NEW.id, OLD.id);
+
+  PERFORM pg_notify('issue_changed', json_build_object(
+    'id', issue_id,
+    'team_id', COALESCE(NEW.team_id, OLD.team_id),
+    'operation', TG_OP
+  )::text);
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER issue_changed_trigger
+AFTER INSERT OR UPDATE ON issues
+FOR EACH ROW EXECUTE FUNCTION notify_issue_changed();

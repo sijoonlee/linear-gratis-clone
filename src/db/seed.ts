@@ -18,6 +18,16 @@ async function seed() {
   }).returning();
   console.log('Created user:', user.name);
 
+  const [agentUser] = await db.insert(schema.users).values({
+    name: 'Claude Sonnet Agent',
+    email: 'claude-sonnet-agent@agent',
+    type: 'agent',
+    agentCli: 'claude',
+    agentModel: 'claude-sonnet-4-6',
+    permissionMode: 'ask',
+  }).returning();
+  console.log('Created agent user:', agentUser.name);
+
   // Team
   const [team] = await db.insert(schema.teams).values({
     name: 'Engineering',
@@ -33,18 +43,26 @@ async function seed() {
 
   // Statuses
   const statusValues = [
-    { teamId: team.id, name: 'Backlog',     color: '#95A2B3', type: 'backlog'    as const, position: 0 },
-    { teamId: team.id, name: 'Todo',        color: '#95A2B3', type: 'unstarted'  as const, position: 1 },
-    { teamId: team.id, name: 'In Progress', color: '#F2C94C', type: 'started'    as const, position: 2 },
-    { teamId: team.id, name: 'Done',        color: '#26C281', type: 'completed'  as const, position: 3 },
-    { teamId: team.id, name: 'Cancelled',   color: '#95A2B3', type: 'cancelled'  as const, position: 4 },
+    { teamId: team.id, name: 'Backlog',                  color: '#95A2B3', type: 'backlog'           as const, position: 0 },
+    { teamId: team.id, name: 'Todo',                     color: '#95A2B3', type: 'todo'              as const, position: 1 },
+    { teamId: team.id, name: 'Plan - Before Review',     color: '#7C3AED', type: 'plan'              as const, position: 2 },
+    { teamId: team.id, name: 'Plan - In Review',         color: '#7C3AED', type: 'plan'              as const, position: 3 },
+    { teamId: team.id, name: 'Plan - Approved',          color: '#10B981', type: 'plan'              as const, position: 4 },
+    { teamId: team.id, name: 'Plan - Disapproved',       color: '#EF4444', type: 'plan'              as const, position: 5 },
+    { teamId: team.id, name: 'Coding in Process',        color: '#F59E0B', type: 'coding_in_process' as const, position: 6 },
+    { teamId: team.id, name: 'Code - Before Review',     color: '#2563EB', type: 'code'              as const, position: 7 },
+    { teamId: team.id, name: 'Code - In Review',         color: '#2563EB', type: 'code'              as const, position: 8 },
+    { teamId: team.id, name: 'Code - Approved',          color: '#10B981', type: 'code'              as const, position: 9 },
+    { teamId: team.id, name: 'Code - Disapproved',       color: '#EF4444', type: 'code'              as const, position: 10 },
+    { teamId: team.id, name: 'Done',                     color: '#26C281', type: 'done'              as const, position: 11 },
+    { teamId: team.id, name: 'Cancelled',                color: '#95A2B3', type: 'cancelled'         as const, position: 12 },
   ];
   const statuses = await db.insert(schema.issueStatuses).values(statusValues).returning();
   console.log('Created statuses:', statuses.map(s => s.name).join(', '));
 
   const backlog     = statuses.find(s => s.name === 'Backlog')!;
   const todo        = statuses.find(s => s.name === 'Todo')!;
-  const inProgress  = statuses.find(s => s.name === 'In Progress')!;
+  const coding      = statuses.find(s => s.name === 'Coding in Process')!;
   const done        = statuses.find(s => s.name === 'Done')!;
 
   // Labels
@@ -67,6 +85,7 @@ async function seed() {
     description: 'Self-hosted Linear clone project',
     status: 'in_progress',
     color: '#5E6AD2',
+    workingDirectory: process.cwd(),
     startDate: new Date(),
     targetDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
   }).returning();
@@ -76,13 +95,12 @@ async function seed() {
   // Schedule
   const [schedule] = await db.insert(schema.schedules).values({
     teamId: team.id,
+    agentUserId: agentUser.id,
     name: 'Daily standup summary',
     description: 'Summarise open issues and in-progress work for the team',
     prompt: 'Review the open issues in the Linear clone project and write a concise standup summary: what was done yesterday, what is in progress today, and any blockers.',
     cronExpression: '0 9 * * 1-5',
     workingDirectory: process.cwd(),
-    model: 'claude-sonnet-4-6',
-    permissionMode: 'ask',
     enabled: true,
   }).returning();
 
@@ -111,7 +129,7 @@ async function seed() {
     {
       teamId: team.id,
       projectId: project.id,
-      statusId: inProgress.id,
+      statusId: coding.id,
       title: 'Build sidebar navigation',
       description: 'Left sidebar with team switcher, issues, projects, schedules, views.',
       priority: 'high' as const,
@@ -120,7 +138,7 @@ async function seed() {
     {
       teamId: team.id,
       projectId: project.id,
-      statusId: inProgress.id,
+      statusId: coding.id,
       title: 'Build issues list view',
       description: 'Main issues list grouped by status with filter and sort controls.',
       priority: 'medium' as const,
@@ -130,6 +148,7 @@ async function seed() {
       teamId: team.id,
       projectId: project.id,
       statusId: todo.id,
+      assigneeId: agentUser.id,
       title: 'Build issue detail page',
       description: 'Full issue detail with markdown editor, status/priority selectors, and comments.',
       priority: 'medium' as const,
@@ -139,6 +158,7 @@ async function seed() {
       teamId: team.id,
       projectId: project.id,
       statusId: todo.id,
+      assigneeId: agentUser.id,
       title: 'Build kanban board',
       description: 'Drag-and-drop kanban view grouped by issue status.',
       priority: 'medium' as const,

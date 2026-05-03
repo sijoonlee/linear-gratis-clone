@@ -1,4 +1,4 @@
-type StatusType = 'backlog' | 'unstarted' | 'started' | 'completed' | 'cancelled' | string;
+type StatusType = 'backlog' | 'todo' | 'plan' | 'coding_in_process' | 'code' | 'done' | 'cancelled' | string;
 
 export function StatusIcon({ type, color, className = 'h-3.5 w-3.5' }: {
   type: StatusType;
@@ -14,14 +14,22 @@ export function StatusIcon({ type, color, className = 'h-3.5 w-3.5' }: {
       </svg>
     );
   }
-  if (type === 'unstarted') {
+  if (type === 'todo') {
     return (
       <svg className={className} viewBox="0 0 14 14" fill="none">
         <circle cx="7" cy="7" r="6" stroke={c} strokeWidth="1.5" />
       </svg>
     );
   }
-  if (type === 'started') {
+  if (type === 'plan') {
+    return (
+      <svg className={className} viewBox="0 0 14 14" fill="none">
+        <circle cx="7" cy="7" r="6" stroke={c} strokeWidth="1.5" />
+        <path d="M4 7h6M4 5h6M4 9h4" stroke={c} strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (type === 'coding_in_process') {
     return (
       <svg className={className} viewBox="0 0 14 14" fill="none">
         <circle cx="7" cy="7" r="6" stroke={c} strokeWidth="1.5" />
@@ -29,7 +37,15 @@ export function StatusIcon({ type, color, className = 'h-3.5 w-3.5' }: {
       </svg>
     );
   }
-  if (type === 'completed') {
+  if (type === 'code') {
+    return (
+      <svg className={className} viewBox="0 0 14 14" fill="none">
+        <circle cx="7" cy="7" r="6" stroke={c} strokeWidth="1.5" />
+        <path d="M5.4 5.2 3.6 7l1.8 1.8M8.6 5.2 10.4 7 8.6 8.8" stroke={c} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (type === 'done') {
     return (
       <svg className={className} viewBox="0 0 14 14" fill="none">
         <circle cx="7" cy="7" r="6" fill={c} />

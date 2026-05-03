@@ -29,11 +29,40 @@ export type KanbanStatus = {
   type: string;
 };
 
+type KanbanColumn = {
+  id: string;
+  name: string;
+  color: string;
+  type: string;
+  statusIds: string[];
+  defaultStatusId: string;
+  showReviewBadge: boolean;
+};
+
+const COLUMN_NAMES: Record<string, string> = {
+  backlog: 'Backlog',
+  todo: 'Todo',
+  plan: 'Plan',
+  coding_in_process: 'Coding in Process',
+  code: 'Code',
+  done: 'Done',
+  cancelled: 'Cancelled',
+};
+
+function reviewLabel(statusName: string, columnName: string) {
+  const prefix = `${columnName} - `;
+  return statusName.startsWith(prefix) ? statusName.slice(prefix.length) : statusName;
+}
+
 function IssueCard({
   issue,
+  showReviewBadge,
+  columnName,
   onDragStart,
 }: {
   issue: KanbanIssue;
+  showReviewBadge: boolean;
+  columnName: string;
   onDragStart: (id: string) => void;
 }) {
   return (
@@ -49,6 +78,14 @@ function IssueCard({
       </Link>
       <div className="flex items-center gap-2">
         <PriorityIcon priority={priorityToNumber(issue.priority)} className="w-3 h-3" />
+        {showReviewBadge && (
+          <span
+            className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium"
+            style={{ backgroundColor: `${issue.statusColor}18`, color: issue.statusColor }}
+          >
+            {reviewLabel(issue.statusName, columnName)}
+          </span>
+        )}
         {issue.labels.map(l => (
           <span
             key={l.id}
@@ -67,7 +104,7 @@ function IssueCard({
 }
 
 function Column({
-  status,
+  column,
   issues,
   onDrop,
   onDragStart,
@@ -75,7 +112,7 @@ function Column({
   creating,
   onCreatingChange,
 }: {
-  status: KanbanStatus;
+  column: KanbanColumn;
   issues: KanbanIssue[];
   onDrop: (statusId: string) => void;
   onDragStart: (id: string) => void;
@@ -89,7 +126,7 @@ function Column({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;
-    await onQuickCreate(status.id, title.trim());
+    await onQuickCreate(column.defaultStatusId, title.trim());
     setTitle('');
     onCreatingChange(false);
   }
@@ -101,12 +138,12 @@ function Column({
       }`}
       onDragOver={e => { e.preventDefault(); setOver(true); }}
       onDragLeave={() => setOver(false)}
-      onDrop={() => { setOver(false); onDrop(status.id); }}
+      onDrop={() => { setOver(false); onDrop(column.defaultStatusId); }}
     >
       {/* Column header */}
       <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border">
-        <StatusIcon type={status.type} color={status.color} className="h-3.5 w-3.5" />
-        <span className="text-sm font-medium flex-1">{status.name}</span>
+        <StatusIcon type={column.type} color={column.color} className="h-3.5 w-3.5" />
+        <span className="text-sm font-medium flex-1">{column.name}</span>
         <span className="text-xs text-muted-foreground tabular-nums">{issues.length}</span>
         <button
           onClick={() => onCreatingChange(!creating)}
@@ -119,7 +156,13 @@ function Column({
       {/* Cards */}
       <div className="flex-1 p-2 space-y-2 min-h-16">
         {issues.map(issue => (
-          <IssueCard key={issue.id} issue={issue} onDragStart={onDragStart} />
+          <IssueCard
+            key={issue.id}
+            issue={issue}
+            showReviewBadge={column.showReviewBadge}
+            columnName={column.name}
+            onDragStart={onDragStart}
+          />
         ))}
       </div>
 
@@ -172,23 +215,44 @@ export function KanbanBoard({
     }
   }
 
-  const byStatus = statuses.reduce<Record<string, KanbanIssue[]>>((acc, s) => {
-    acc[s.id] = issues.filter(i => i.statusId === s.id);
+  const columns = statuses.reduce<KanbanColumn[]>((acc, status) => {
+    const existing = acc.find(column => column.type === status.type);
+    if (existing) {
+      existing.statusIds.push(status.id);
+      existing.showReviewBadge = true;
+      return acc;
+    }
+
+    acc.push({
+      id: status.type,
+      name: COLUMN_NAMES[status.type] ?? status.name,
+      color: status.color,
+      type: status.type,
+      statusIds: [status.id],
+      defaultStatusId: status.id,
+      showReviewBadge: false,
+    });
+    return acc;
+  }, []);
+
+  const byColumn = columns.reduce<Record<string, KanbanIssue[]>>((acc, column) => {
+    const statusIds = new Set(column.statusIds);
+    acc[column.id] = issues.filter(issue => statusIds.has(issue.statusId));
     return acc;
   }, {});
 
   return (
     <div className="flex gap-4 p-4 overflow-x-auto h-full">
-      {statuses.map(status => (
+      {columns.map(column => (
         <Column
-          key={status.id}
-          status={status}
-          issues={byStatus[status.id] ?? []}
+          key={column.id}
+          column={column}
+          issues={byColumn[column.id] ?? []}
           onDrop={handleDrop}
           onDragStart={id => { dragging.current = id; }}
           onQuickCreate={onCreateIssue}
-          creating={creatingStatusId === status.id}
-          onCreatingChange={creating => onCreatingStatusChange(creating ? status.id : null)}
+          creating={creatingStatusId === column.defaultStatusId}
+          onCreatingChange={creating => onCreatingStatusChange(creating ? column.defaultStatusId : null)}
         />
       ))}
     </div>
