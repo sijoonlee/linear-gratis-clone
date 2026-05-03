@@ -7,6 +7,10 @@ export type User = {
   name: string;
   email: string;
   avatarUrl: string | null;
+  type: 'human' | 'agent';
+  agentModel: string | null;
+  agentCli: string | null;
+  permissionMode: string | null;
 };
 
 type UserContextValue = {
@@ -30,7 +34,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
       .then(r => r.json() as Promise<{ data: User[] }>)
       .then(({ data }) => {
         const savedId = localStorage.getItem('current-user-id');
-        const saved = data.find(u => u.id === savedId) ?? data[0] ?? null;
+        const saved = data.find(u => u.id === savedId) ?? data.find(u => u.type !== 'agent') ?? data[0] ?? null;
         setCurrentUserState(saved);
         if (saved) localStorage.setItem('current-user-id', saved.id);
       })

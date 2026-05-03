@@ -8,7 +8,15 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json() as { name: string; email: string; avatarUrl?: string };
+  const body = await req.json() as {
+    name: string;
+    email: string;
+    avatarUrl?: string;
+    type?: 'human' | 'agent';
+    agentModel?: string;
+    agentCli?: string;
+    permissionMode?: string;
+  };
   if (!body.name || !body.email) {
     return NextResponse.json({ error: 'name and email are required' }, { status: 400 });
   }
@@ -16,6 +24,10 @@ export async function POST(req: NextRequest) {
     name: body.name,
     email: body.email,
     avatarUrl: body.avatarUrl,
+    type: body.type ?? 'human',
+    agentModel: body.agentModel,
+    agentCli: body.agentCli,
+    permissionMode: body.permissionMode,
   }).returning();
   return NextResponse.json({ data: row }, { status: 201 });
 }

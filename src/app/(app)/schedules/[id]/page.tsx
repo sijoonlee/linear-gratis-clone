@@ -3,13 +3,15 @@
 import { useEffect, useState, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Trash2, CalendarClock, CheckCircle2, XCircle, Clock, AlertCircle } from 'lucide-react';
-import {
-  AGENT_CLI_OPTIONS,
-  DEFAULT_AGENT_CLI,
-  normalizeAgentCli,
-  type AgentCli,
-} from '@/lib/agent-cli';
+import { ArrowLeft, Bot, Trash2, CalendarClock, CheckCircle2, XCircle, Clock, AlertCircle } from 'lucide-react';
+
+type AgentUser = {
+  id: string;
+  name: string;
+  agentCli: string | null;
+  agentModel: string | null;
+  permissionMode: string | null;
+};
 
 type CronTask = {
   id: string;
@@ -30,15 +32,10 @@ type Schedule = {
   prompt: string;
   cronExpression: string | null;
   workingDirectory: string | null;
-  agentCli: AgentCli;
-  model: string;
-  permissionMode: string;
   enabled: boolean;
+  agentUser: AgentUser | null;
   cronTasks: CronTask[];
 };
-
-const MODELS = ['claude-sonnet-4-6', 'claude-opus-4-5', 'claude-haiku-4-5-20251001'];
-const PERMISSION_MODES = ['ask', 'auto', 'accept-edits', 'plan'];
 
 function statusBadge(status: string) {
   switch (status) {
@@ -59,9 +56,8 @@ export default function ScheduleDetailPage({ params }: { params: Promise<{ id: s
   const [workingDirectory, setWorkingDirectory] = useState('');
   const [cronExpression, setCronExpression] = useState('');
   const [enabled, setEnabled] = useState(true);
-  const [agentCli, setAgentCli] = useState<AgentCli>(DEFAULT_AGENT_CLI);
-  const [model, setModel] = useState('claude-sonnet-4-6');
-  const [permissionMode, setPermissionMode] = useState('ask');
+  const [agentUserId, setAgentUserId] = useState<string>('');
+  const [agentUsers, setAgentUsers] = useState<AgentUser[]>([]);
   const [expandedTask, setExpandedTask] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -75,15 +71,18 @@ export default function ScheduleDetailPage({ params }: { params: Promise<{ id: s
         setWorkingDirectory(data.workingDirectory ?? '');
         setCronExpression(data.cronExpression ?? '');
         setEnabled(data.enabled);
-        setAgentCli(normalizeAgentCli(data.agentCli));
-        setModel(data.model);
-        setPermissionMode(data.permissionMode);
+        setAgentUserId(data.agentUser?.id ?? '');
         setLoading(false);
+
+      fetch('/api/users')
+        .then(r => r.json() as Promise<{ data: (AgentUser & { type: string })[] }>)
+        .then(({ data: allUsers }) => setAgentUsers(allUsers.filter(u => u.type === 'agent')))
+        .catch(() => {});
       });
   }, [id]);
 
   async function handleSave() {
-    if (!name.trim() || !prompt.trim()) return;
+    if (!name.trim() || !prompt.trim() || !agentUserId) return;
     setSaving(true);
     const res = await fetch(`/api/schedules/${id}`, {
       method: 'PATCH',
@@ -94,9 +93,7 @@ export default function ScheduleDetailPage({ params }: { params: Promise<{ id: s
         workingDirectory: workingDirectory.trim() || null,
         cronExpression: cronExpression.trim() || null,
         enabled,
-        agentCli,
-        model,
-        permissionMode,
+        agentUserId,
       }),
     });
     const { data } = await res.json() as { data: Schedule };
@@ -111,9 +108,7 @@ export default function ScheduleDetailPage({ params }: { params: Promise<{ id: s
     setWorkingDirectory(schedule.workingDirectory ?? '');
     setCronExpression(schedule.cronExpression ?? '');
     setEnabled(schedule.enabled);
-    setAgentCli(normalizeAgentCli(schedule.agentCli));
-    setModel(schedule.model);
-    setPermissionMode(schedule.permissionMode);
+    setAgentUserId(schedule.agentUser?.id ?? '');
   }
 
   async function handleDelete() {
@@ -144,7 +139,7 @@ export default function ScheduleDetailPage({ params }: { params: Promise<{ id: s
             </button>
             <button
               onClick={handleSave}
-              disabled={saving || !name.trim() || !prompt.trim()}
+              disabled={saving || !name.trim() || !prompt.trim() || !agentUserId}
               className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-xs font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
             >
               {saving ? 'Saving…' : 'Save'}
@@ -173,7 +168,7 @@ export default function ScheduleDetailPage({ params }: { params: Promise<{ id: s
               onChange={e => setPrompt(e.target.value)}
               rows={5}
               className="w-full text-sm bg-background border border-border rounded px-3 py-2 outline-none focus:ring-1 focus:ring-primary/50 resize-none text-foreground/80 leading-relaxed"
-              placeholder={agentCli === 'claude' ? 'Instructions for Claude…' : 'Instructions for Codex…'}
+              placeholder="Instructions for the agent…"
             />
           </div>
 
@@ -257,14 +252,33 @@ export default function ScheduleDetailPage({ params }: { params: Promise<{ id: s
         </div>
 
         <div>
-          <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Agent CLI</p>
+          <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">AI Agent</p>
           <select
-            value={agentCli}
-            onChange={e => setAgentCli(normalizeAgentCli(e.target.value))}
+            value={agentUserId}
+            onChange={e => setAgentUserId(e.target.value)}
             className="w-full text-xs bg-background border border-border rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary/50"
           >
-            {AGENT_CLI_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+            <option value="">Select an AI agent</option>
+            {agentUsers.map(u => (
+              <option key={u.id} value={u.id}>{u.name}</option>
+            ))}
           </select>
+          {agentUserId && agentUsers.find(u => u.id === agentUserId) && (() => {
+            const u = agentUsers.find(a => a.id === agentUserId)!;
+            return (
+              <div className="mt-2 px-2 py-1.5 rounded bg-muted/50 space-y-0.5">
+                {u.agentCli && <p className="text-xs text-muted-foreground">CLI: {u.agentCli}</p>}
+                {u.agentModel && <p className="text-xs text-muted-foreground">Model: {u.agentModel}</p>}
+                {u.permissionMode && <p className="text-xs text-muted-foreground">Mode: {u.permissionMode}</p>}
+              </div>
+            );
+          })()}
+          {agentUsers.length === 0 && (
+            <p className="mt-1 text-xs text-muted-foreground">No AI agents — create one in Members.</p>
+          )}
+          {agentUsers.length > 0 && !agentUserId && (
+            <p className="mt-1 text-xs text-muted-foreground">Required for schedule execution.</p>
+          )}
         </div>
 
         {/* Cron expression */}
@@ -278,33 +292,6 @@ export default function ScheduleDetailPage({ params }: { params: Promise<{ id: s
           />
         </div>
 
-        {agentCli === 'claude' && (
-          <>
-            {/* Model */}
-            <div>
-              <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Model</p>
-              <select
-                value={model}
-                onChange={e => setModel(e.target.value)}
-                className="w-full text-xs bg-background border border-border rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary/50"
-              >
-                {MODELS.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-
-            {/* Permission mode */}
-            <div>
-              <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Permission Mode</p>
-              <select
-                value={permissionMode}
-                onChange={e => setPermissionMode(e.target.value)}
-                className="w-full text-xs bg-background border border-border rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary/50"
-              >
-                {PERMISSION_MODES.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-          </>
-        )}
 
         {/* Created */}
         <div>

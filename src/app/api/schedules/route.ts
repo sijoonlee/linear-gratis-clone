@@ -1,18 +1,58 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { schedules } from '@/db/schema';
+import { schedules, users } from '@/db/schema';
 import { eq, desc } from 'drizzle-orm';
-import { normalizeAgentCli } from '@/lib/agent-cli';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const teamId = searchParams.get('teamId');
 
-  const rows = teamId
-    ? await db.select().from(schedules).where(eq(schedules.teamId, teamId)).orderBy(desc(schedules.createdAt))
-    : await db.select().from(schedules).orderBy(desc(schedules.createdAt));
+  const rows = await db
+    .select({
+      id: schedules.id,
+      teamId: schedules.teamId,
+      name: schedules.name,
+      description: schedules.description,
+      prompt: schedules.prompt,
+      cronExpression: schedules.cronExpression,
+      workingDirectory: schedules.workingDirectory,
+      enabled: schedules.enabled,
+      lastRunAt: schedules.lastRunAt,
+      createdAt: schedules.createdAt,
+      updatedAt: schedules.updatedAt,
+      agentUserId: schedules.agentUserId,
+      agentUserName: users.name,
+      agentUserCli: users.agentCli,
+      agentUserModel: users.agentModel,
+      agentUserPermissionMode: users.permissionMode,
+    })
+    .from(schedules)
+    .leftJoin(users, eq(schedules.agentUserId, users.id))
+    .where(teamId ? eq(schedules.teamId, teamId) : undefined)
+    .orderBy(desc(schedules.createdAt));
 
-  return NextResponse.json({ data: rows });
+  const data = rows.map(r => ({
+    id: r.id,
+    teamId: r.teamId,
+    name: r.name,
+    description: r.description,
+    prompt: r.prompt,
+    cronExpression: r.cronExpression,
+    workingDirectory: r.workingDirectory,
+    enabled: r.enabled,
+    lastRunAt: r.lastRunAt,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+    agentUser: r.agentUserId ? {
+      id: r.agentUserId,
+      name: r.agentUserName,
+      agentCli: r.agentUserCli,
+      agentModel: r.agentUserModel,
+      permissionMode: r.agentUserPermissionMode,
+    } : null,
+  }));
+
+  return NextResponse.json({ data });
 }
 
 export async function POST(req: NextRequest) {
@@ -20,30 +60,37 @@ export async function POST(req: NextRequest) {
     teamId: string;
     name: string;
     prompt: string;
+    agentUserId: string;
     workingDirectory?: string | null;
-    agentCli?: string;
     description?: string;
     cronExpression?: string;
-    model?: string;
-    permissionMode?: string;
     enabled?: boolean;
   };
-  if (!body.teamId || !body.name || !body.prompt) {
+  if (!body.teamId || !body.name || !body.prompt || !body.agentUserId) {
     return NextResponse.json(
-      { error: 'teamId, name, and prompt are required' },
+      { error: 'teamId, name, prompt, and agentUserId are required' },
       { status: 400 }
     );
   }
+
+  const [agentUser] = await db.select({
+    id: users.id,
+    type: users.type,
+    agentCli: users.agentCli,
+  }).from(users).where(eq(users.id, body.agentUserId));
+
+  if (!agentUser || agentUser.type !== 'agent' || !agentUser.agentCli) {
+    return NextResponse.json({ error: 'valid agentUserId is required' }, { status: 400 });
+  }
+
   const [row] = await db.insert(schedules).values({
     teamId: body.teamId,
+    agentUserId: body.agentUserId,
     name: body.name,
     prompt: body.prompt,
     workingDirectory: body.workingDirectory?.trim() || null,
-    agentCli: normalizeAgentCli(body.agentCli),
     description: body.description,
     cronExpression: body.cronExpression ?? null,
-    model: body.model ?? 'claude-sonnet-4-6',
-    permissionMode: body.permissionMode ?? 'ask',
     enabled: body.enabled ?? true,
   }).returning();
   return NextResponse.json({ data: row }, { status: 201 });

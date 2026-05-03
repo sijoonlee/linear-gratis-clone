@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useTeam } from '@/contexts/team-context';
+import { useUser } from '@/contexts/user-context';
 import { Plus, Trash2, X, Check } from 'lucide-react';
 
 type Member = {
@@ -18,6 +19,7 @@ type User = {
   name: string;
   email: string;
   avatarUrl: string | null;
+  type: 'human' | 'agent';
 };
 
 function Avatar({ user }: { user: { name: string; avatarUrl: string | null } }) {
@@ -104,15 +106,7 @@ function AddMemberForm({
   );
 }
 
-function MemberRow({
-  member,
-  teamId,
-  onRemoved,
-}: {
-  member: Member;
-  teamId: string;
-  onRemoved: (id: string) => void;
-}) {
+function MemberRow({ member, teamId, onRemoved }: { member: Member; teamId: string; onRemoved: (id: string) => void }) {
   const [confirming, setConfirming] = useState(false);
 
   async function handleRemove() {
@@ -127,23 +121,15 @@ function MemberRow({
         <p className="text-sm font-medium">{member.name}</p>
         <p className="text-xs text-muted-foreground truncate">{member.email}</p>
       </div>
-      <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground capitalize">
-        {member.role}
-      </span>
+      <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground capitalize">{member.role}</span>
       <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
         {confirming ? (
           <>
-            <button onClick={handleRemove} className="p-1.5 rounded hover:bg-destructive/10 text-destructive transition-colors">
-              <Check className="h-3.5 w-3.5" />
-            </button>
-            <button onClick={() => setConfirming(false)} className="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors">
-              <X className="h-3.5 w-3.5" />
-            </button>
+            <button onClick={handleRemove} className="p-1.5 rounded hover:bg-destructive/10 text-destructive transition-colors"><Check className="h-3.5 w-3.5" /></button>
+            <button onClick={() => setConfirming(false)} className="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"><X className="h-3.5 w-3.5" /></button>
           </>
         ) : (
-          <button onClick={() => setConfirming(true)} className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors">
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          <button onClick={() => setConfirming(true)} className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"><Trash2 className="h-3.5 w-3.5" /></button>
         )}
       </div>
     </div>
@@ -151,7 +137,8 @@ function MemberRow({
 }
 
 export default function MembersPage() {
-  const { activeTeam } = useTeam();
+  const { activeTeam, refreshTeams } = useTeam();
+  const { currentUser } = useUser();
   const [members, setMembers] = useState<Member[]>([]);
   const [adding, setAdding] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -184,42 +171,42 @@ export default function MembersPage() {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-1 max-w-2xl mx-auto w-full">
-        {adding && activeTeam && (
-          <div className="mb-3">
-            <AddMemberForm
-              teamId={activeTeam.id}
-              existingIds={existingIds}
-              onAdded={m => { setMembers(prev => [...prev, m]); setAdding(false); }}
-              onCancel={() => setAdding(false)}
-            />
-          </div>
-        )}
-
-        {!activeTeam ? (
-          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-            <p className="text-sm">No team selected</p>
-            <p className="text-xs mt-1">Join a team first from the <span className="text-primary">Teams</span> page.</p>
-          </div>
-        ) : loading ? (
-          <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">Loading…</div>
-        ) : members.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-            <p className="text-sm">No members yet</p>
-            <button onClick={() => setAdding(true)} className="text-xs text-primary hover:underline mt-1">
-              Add the first member
-            </button>
-          </div>
-        ) : (
-          members.map(m => (
-            <MemberRow
-              key={m.id}
-              member={m}
-              teamId={activeTeam.id}
-              onRemoved={id => setMembers(prev => prev.filter(m => m.id !== id))}
-            />
-          ))
-        )}
+      <div className="flex-1 overflow-y-auto p-4 max-w-2xl mx-auto w-full">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1">Team members</p>
+        <div className="space-y-1">
+          {adding && activeTeam && (
+            <div className="mb-3">
+              <AddMemberForm
+                teamId={activeTeam.id}
+                existingIds={existingIds}
+                onAdded={m => { setMembers(prev => [...prev, m]); setAdding(false); }}
+                onCancel={() => setAdding(false)}
+              />
+            </div>
+          )}
+          {!activeTeam ? (
+            <p className="text-sm text-muted-foreground px-4 py-3">No team selected.</p>
+          ) : loading ? (
+            <p className="text-sm text-muted-foreground px-4 py-3">Loading…</p>
+          ) : members.length === 0 ? (
+            <p className="text-sm text-muted-foreground px-4 py-3">
+              No members yet.{' '}
+              <button onClick={() => setAdding(true)} className="text-primary hover:underline">Add the first member</button>
+            </p>
+          ) : (
+            members.map(m => (
+              <MemberRow
+                key={m.id}
+                member={m}
+                teamId={activeTeam!.id}
+                onRemoved={id => {
+                  setMembers(prev => prev.filter(m => m.id !== id));
+                  if (id === currentUser?.id) refreshTeams();
+                }}
+              />
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

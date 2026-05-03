@@ -18,6 +18,16 @@ async function seed() {
   }).returning();
   console.log('Created user:', user.name);
 
+  const [agentUser] = await db.insert(schema.users).values({
+    name: 'Claude Sonnet Agent',
+    email: 'claude-sonnet-agent@agent',
+    type: 'agent',
+    agentCli: 'claude',
+    agentModel: 'claude-sonnet-4-6',
+    permissionMode: 'ask',
+  }).returning();
+  console.log('Created agent user:', agentUser.name);
+
   // Team
   const [team] = await db.insert(schema.teams).values({
     name: 'Engineering',
@@ -76,13 +86,12 @@ async function seed() {
   // Schedule
   const [schedule] = await db.insert(schema.schedules).values({
     teamId: team.id,
+    agentUserId: agentUser.id,
     name: 'Daily standup summary',
     description: 'Summarise open issues and in-progress work for the team',
     prompt: 'Review the open issues in the Linear clone project and write a concise standup summary: what was done yesterday, what is in progress today, and any blockers.',
     cronExpression: '0 9 * * 1-5',
     workingDirectory: process.cwd(),
-    model: 'claude-sonnet-4-6',
-    permissionMode: 'ask',
     enabled: true,
   }).returning();
 

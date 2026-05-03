@@ -1,12 +1,17 @@
 CREATE TYPE "public"."issue_priority" AS ENUM('no_priority', 'urgent', 'high', 'medium', 'low');
 CREATE TYPE "public"."issue_status_type" AS ENUM('backlog', 'unstarted', 'started', 'completed', 'cancelled');
 CREATE TYPE "public"."project_status" AS ENUM('backlog', 'planned', 'in_progress', 'completed', 'cancelled');
+CREATE TYPE "public"."user_type" AS ENUM('human', 'agent');
 
 CREATE TABLE "users" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "name" text NOT NULL,
   "email" text NOT NULL,
   "avatar_url" text,
+  "type" "user_type" DEFAULT 'human' NOT NULL,
+  "agent_model" text,
+  "agent_cli" text,
+  "permission_mode" text,
   "created_at" timestamp DEFAULT now() NOT NULL,
   "updated_at" timestamp DEFAULT now() NOT NULL,
   CONSTRAINT "users_email_unique" UNIQUE("email")
@@ -65,14 +70,12 @@ CREATE TABLE "projects" (
 CREATE TABLE "schedules" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "team_id" uuid NOT NULL REFERENCES "public"."teams"("id") ON DELETE cascade,
+  "agent_user_id" uuid NOT NULL REFERENCES "public"."users"("id") ON DELETE restrict,
   "name" text NOT NULL,
   "description" text,
   "prompt" text NOT NULL,
   "cron_expression" text,
   "working_directory" text,
-  "agent_cli" text DEFAULT 'claude' NOT NULL,
-  "model" text DEFAULT 'claude-sonnet-4-6' NOT NULL,
-  "permission_mode" text DEFAULT 'ask' NOT NULL,
   "enabled" boolean DEFAULT true NOT NULL,
   "last_run_at" timestamp,
   "created_at" timestamp DEFAULT now() NOT NULL,

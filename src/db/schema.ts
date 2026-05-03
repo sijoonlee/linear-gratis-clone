@@ -11,6 +11,8 @@ import { relations } from 'drizzle-orm';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
+export const userTypeEnum = pgEnum('user_type', ['human', 'agent']);
+
 export const issuePriorityEnum = pgEnum('issue_priority', [
   'no_priority',
   'urgent',
@@ -42,6 +44,10 @@ export const users = pgTable('users', {
   name: text('name').notNull(),
   email: text('email').notNull().unique(),
   avatarUrl: text('avatar_url'),
+  type: userTypeEnum('type').notNull().default('human'),
+  agentModel: text('agent_model'),
+  agentCli: text('agent_cli'),
+  permissionMode: text('permission_mode'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -109,14 +115,12 @@ export const projects = pgTable('projects', {
 export const schedules = pgTable('schedules', {
   id: uuid('id').defaultRandom().primaryKey(),
   teamId: uuid('team_id').notNull().references(() => teams.id, { onDelete: 'cascade' }),
+  agentUserId: uuid('agent_user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
   name: text('name').notNull(),
   description: text('description'),
   prompt: text('prompt').notNull(),
   cronExpression: text('cron_expression'),
   workingDirectory: text('working_directory'),
-  agentCli: text('agent_cli').notNull().default('claude'),
-  model: text('model').notNull().default('claude-sonnet-4-6'),
-  permissionMode: text('permission_mode').notNull().default('ask'),
   enabled: boolean('enabled').notNull().default(true),
   lastRunAt: timestamp('last_run_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -259,6 +263,7 @@ export const labelsRelations = relations(labels, ({ one, many }) => ({
 
 export const schedulesRelations = relations(schedules, ({ one, many }) => ({
   team: one(teams, { fields: [schedules.teamId], references: [teams.id] }),
+  agentUser: one(users, { fields: [schedules.agentUserId], references: [users.id] }),
   cronTasks: many(cronTasks),
 }));
 
