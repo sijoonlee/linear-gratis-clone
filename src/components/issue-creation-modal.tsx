@@ -225,9 +225,9 @@ export function IssueCreationModal({
           if (defaultStateName) {
             defaultState = data.metadata.states.find((s: WorkflowState) => s.name === defaultStateName)
           }
-          // Fall back to unstarted type or first state
+          // Fall back to todo type or first state
           if (!defaultState) {
-            defaultState = data.metadata.states.find((s: WorkflowState) => s.type === 'unstarted') || data.metadata.states[0]
+            defaultState = data.metadata.states.find((s: WorkflowState) => s.type === 'todo') || data.metadata.states[0]
           }
         }
 

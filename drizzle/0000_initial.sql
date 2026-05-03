@@ -1,5 +1,5 @@
 CREATE TYPE "public"."issue_priority" AS ENUM('no_priority', 'urgent', 'high', 'medium', 'low');
-CREATE TYPE "public"."issue_status_type" AS ENUM('backlog', 'unstarted', 'started', 'completed', 'cancelled');
+CREATE TYPE "public"."issue_status_type" AS ENUM('backlog', 'todo', 'plan', 'coding_in_process', 'code', 'done', 'cancelled');
 CREATE TYPE "public"."project_status" AS ENUM('backlog', 'planned', 'in_progress', 'completed', 'cancelled');
 CREATE TYPE "public"."user_type" AS ENUM('human', 'agent');
 
@@ -61,6 +61,7 @@ CREATE TABLE "projects" (
   "description" text,
   "status" "project_status" DEFAULT 'planned' NOT NULL,
   "color" text DEFAULT '#5E6AD2',
+  "working_directory" text NOT NULL,
   "start_date" timestamp,
   "target_date" timestamp,
   "created_at" timestamp DEFAULT now() NOT NULL,
@@ -206,3 +207,24 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER schedule_changed_trigger
 AFTER INSERT OR UPDATE OR DELETE ON schedules
 FOR EACH ROW EXECUTE FUNCTION notify_schedule_changed();
+
+CREATE OR REPLACE FUNCTION notify_issue_changed()
+RETURNS trigger AS $$
+DECLARE
+  issue_id uuid;
+BEGIN
+  issue_id := COALESCE(NEW.id, OLD.id);
+
+  PERFORM pg_notify('issue_changed', json_build_object(
+    'id', issue_id,
+    'team_id', COALESCE(NEW.team_id, OLD.team_id),
+    'operation', TG_OP
+  )::text);
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER issue_changed_trigger
+AFTER INSERT OR UPDATE ON issues
+FOR EACH ROW EXECUTE FUNCTION notify_issue_changed();

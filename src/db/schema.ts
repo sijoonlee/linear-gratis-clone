@@ -23,9 +23,11 @@ export const issuePriorityEnum = pgEnum('issue_priority', [
 
 export const issueStatusTypeEnum = pgEnum('issue_status_type', [
   'backlog',
-  'unstarted',
-  'started',
-  'completed',
+  'todo',
+  'plan',
+  'coding_in_process',
+  'code',
+  'done',
   'cancelled',
 ]);
 
@@ -104,6 +106,7 @@ export const projects = pgTable('projects', {
   description: text('description'),
   status: projectStatusEnum('status').notNull().default('planned'),
   color: text('color').default('#5E6AD2'),
+  workingDirectory: text('working_directory').notNull(),
   startDate: timestamp('start_date'),
   targetDate: timestamp('target_date'),
   createdAt: timestamp('created_at').defaultNow().notNull(),

@@ -21,18 +21,22 @@ export async function POST(req: NextRequest) {
     description?: string;
     status?: 'backlog' | 'planned' | 'in_progress' | 'completed' | 'cancelled';
     color?: string;
+    workingDirectory?: string;
     startDate?: string;
     targetDate?: string;
   };
-  if (!body.teamId || !body.name) {
-    return NextResponse.json({ error: 'teamId and name are required' }, { status: 400 });
+  const workingDirectory = body.workingDirectory?.trim();
+  const name = body.name?.trim();
+  if (!body.teamId || !name || !workingDirectory) {
+    return NextResponse.json({ error: 'teamId, name, and workingDirectory are required' }, { status: 400 });
   }
   const [row] = await db.insert(projects).values({
     teamId: body.teamId,
-    name: body.name,
+    name,
     description: body.description,
     status: body.status ?? 'planned',
     color: body.color,
+    workingDirectory,
     startDate: body.startDate ? new Date(body.startDate) : undefined,
     targetDate: body.targetDate ? new Date(body.targetDate) : undefined,
   }).returning();

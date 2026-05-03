@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
     teamId: string;
     name: string;
     color?: string;
-    type: 'backlog' | 'unstarted' | 'started' | 'completed' | 'cancelled';
+    type: 'backlog' | 'todo' | 'plan' | 'coding_in_process' | 'code' | 'done' | 'cancelled';
     position?: number;
   };
   if (!body.teamId || !body.name || !body.type) {

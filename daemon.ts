@@ -9,6 +9,7 @@ import {
   normalizeAgentCli,
   type AgentCli,
 } from './src/lib/agent-cli';
+import { dispatchIssueToPlan } from './src/daemon/issue-orchestrator';
 
 const exec = promisify(execFile);
 
@@ -312,6 +313,13 @@ const server = http.createServer(async (req, res) => {
       const result = await convertCronExpression(description, agentUser ?? null);
       if ('status' in result) return respond(res, result.status, { error: result.error });
       return respond(res, 200, { data: result });
+    }
+
+    if (method === 'POST' && url.pathname === '/issues/dispatch') {
+      const { issueId } = await readBody(req) as { issueId: string };
+      if (!issueId) return respond(res, 400, { error: 'issueId is required' });
+      dispatchIssueToPlan(issueId, api).catch(err => console.error(`[issue:${issueId}] error`, err));
+      return respond(res, 202, { ok: true });
     }
 
     respond(res, 404, { error: 'Not found' });

@@ -124,7 +124,7 @@ If no user exists yet, click **Register** in the sidebar to create one, then go 
 | `users` | App users — name, email, avatar |
 | `teams` | Workspace groups with name and identifier (e.g. `ENG`) |
 | `team_members` | M:N join between users and teams, with role (owner/member) |
-| `issue_statuses` | Per-team statuses (Backlog, Todo, In Progress, Done, Cancelled) |
+| `issue_statuses` | Per-team issue workflow statuses (Backlog, Todo, Plan review, Coding in Process, Code review, Done, Cancelled) |
 | `labels` | Per-team labels with color |
 | `projects` | Collections of issues with status and dates |
 | `issues` | Core entity — title, description, status, priority, assignee, estimate, due date |
