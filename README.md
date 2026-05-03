@@ -115,7 +115,7 @@ If no user exists yet, click **Register** in the sidebar to create one, then go 
 | `npm run db:migrate` | Apply pending migrations to the database |
 | `npm run db:studio` | Open Drizzle Studio (visual DB browser) |
 | `npm run db:seed` | Seed the database with sample data |
-| `npm run daemon` | Start the schedule execution daemon |
+| `npm run conductor` | Start the conductor |
 
 ## Database Schema
 
@@ -187,7 +187,7 @@ All routes return `{ data: ... }` on success or `{ error: "..." }` on failure.
 
 ## CDC Architecture (Schedule Execution)
 
-Schedules are executed by a separate daemon process that watches Postgres for new tasks using Change Data Capture (CDC) via `LISTEN/NOTIFY` — a built-in Postgres pub/sub mechanism.
+Schedules are executed by a separate conductor process that watches Postgres for new tasks using Change Data Capture (CDC) via `LISTEN/NOTIFY` — a built-in Postgres pub/sub mechanism.
 
 ```
 Browser
@@ -198,7 +198,7 @@ Next.js web server ──────────────────── 
   │                          (2) trigger fires pg_notify
   │                                        │
   │                                        ▼
-  │                                     Daemon
+  │                                     Conductor
   │                          (3) LISTEN receives payload
   │                          (4) runs claude --print
   │                          (5) updates cron_task row
@@ -211,21 +211,21 @@ Browser receives notification via SSE (bell icon updates instantly)
 
 ### How it works
 
-1. User triggers a schedule manually, or the daemon detects a due enabled schedule → a `cron_task` row is inserted with `status: pending`
+1. User triggers a schedule manually, or the conductor detects a due enabled schedule → a `cron_task` row is inserted with `status: pending`
 2. A Postgres trigger fires `pg_notify('cron_task_pending', payload)` on every insert
-3. The daemon (a separate Node.js process) is connected to Postgres via `LISTEN` and receives the payload immediately
-4. The daemon runs the selected agent CLI with the schedule's prompt and working directory, defaulting to the daemon directory when blank
-5. The daemon writes the output, exit code, and final status back to the `cron_tasks` row
-6. The daemon POSTs to `/api/notifications` on the web server
+3. The conductor (a separate Node.js process) is connected to Postgres via `LISTEN` and receives the payload immediately
+4. The conductor runs the selected agent CLI with the schedule's prompt and working directory, defaulting to the conductor directory when blank
+5. The conductor writes the output, exit code, and final status back to the `cron_tasks` row
+6. The conductor POSTs to `/api/notifications` on the web server
 7. The web server pushes the notification to the browser via SSE — the bell icon updates without polling
 
-### Running the daemon
+### Running the conductor
 
-The daemon does two jobs:
+The conductor does two jobs:
 - Listens for pending `cron_tasks` via Postgres `LISTEN/NOTIFY`
 - Listens for schedule changes via Postgres `LISTEN/NOTIFY` and registers enabled cron schedules as in-memory `node-cron` jobs
 
-When a registered cron job fires, the daemon inserts a pending `cron_task`; the existing `cron_task_pending` trigger then wakes the task runner.
+When a registered cron job fires, the conductor inserts a pending `cron_task`; the existing `cron_task_pending` trigger then wakes the task runner.
 
 Scheduled tasks and cron-expression conversion use the AI agent selected on the schedule. The app currently supports Claude CLI and Codex CLI agent users.
 
@@ -233,11 +233,11 @@ Scheduled tasks and cron-expression conversion use the AI agent selected on the 
 # Terminal 1 — web server
 npm run dev
 
-# Terminal 2 — daemon
-npm run daemon
+# Terminal 2 — conductor
+npm run conductor
 ```
 
-The daemon reads `DATABASE_URL` from the environment (same as the web server). Optionally set `WEB_SERVER_URL` if the web server is not on `http://localhost:3000`.
+The conductor reads `DATABASE_URL` from the environment (same as the web server). Optionally set `WEB_SERVER_URL` if the web server is not on `http://localhost:3000`.
 
 ## Deployment
 
